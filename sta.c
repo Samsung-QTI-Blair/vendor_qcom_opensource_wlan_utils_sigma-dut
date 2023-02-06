@@ -2011,6 +2011,9 @@ static int set_wpa_common(struct sigma_dut *dut, struct sigma_conn *conn,
 		if (set_network(ifname, id, "proto", "WPA2") < 0)
 			return -2;
 	} else if (strcasecmp(val, "OWE") == 0) {
+	} else if (strcasecmp(val, "WPA3") == 0) {
+		if (set_network(ifname, id, "proto", "RSN") < 0)
+			return -2;
 	} else {
 		send_resp(dut, conn, SIGMA_INVALID, "errorCode,Unrecognized keyMgmtType value");
 		return 0;
@@ -2405,6 +2408,13 @@ static enum sigma_cmd_result cmd_sta_set_psk(struct sigma_dut *dut,
 	    strcasecmp(network_mode, "PBSS") == 0 &&
 	    set_network(ifname, id, "pbss", "1") < 0)
 		return -2;
+
+	val = get_param(cmd, "ProfileConnect");
+	if (dut->program == PROGRAM_LOCR2 &&
+	    val && strcasecmp(val, "disable") == 0) {
+		snprintf(buf, sizeof(buf), "ENABLE_NETWORK %d no-connect", id);
+		wpa_command(ifname, buf);
+	}
 
 	return 1;
 }
@@ -7646,6 +7656,7 @@ static enum sigma_cmd_result cmd_sta_disconnect(struct sigma_dut *dut,
 
 	if (dut->program == PROGRAM_OCE ||
 	    dut->program == PROGRAM_HE ||
+	    dut->program == PROGRAM_LOCR2 ||
 	    (val && atoi(val) == 1)) {
 		wpa_command(intf, "DISCONNECT");
 		return 1;
@@ -9355,7 +9366,7 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 		nan_cmd_sta_reset_default(dut, conn, cmd);
 #endif /* ANDROID_NAN */
 
-	if (dut->program == PROGRAM_LOC &&
+	if ((dut->program == PROGRAM_LOC || dut->program == PROGRAM_LOCR2) &&
 	    lowi_cmd_sta_reset_default(dut, conn, cmd) < 0)
 		return ERROR_SEND_STATUS;
 
@@ -9588,7 +9599,6 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 	dut->beacon_prot = ret == 0 && strncmp(resp, "supported", 9) == 0;
 
 	if (sta_set_client_privacy(dut, conn, intf,
-				   dut->program == PROGRAM_WPA3 &&
 				   dut->device_type == STA_dut &&
 				   dut->client_privacy_default)) {
 		sigma_dut_print(dut, DUT_MSG_ERROR,
@@ -9714,6 +9724,9 @@ static enum sigma_cmd_result cmd_sta_exec_action(struct sigma_dut *dut,
 
 	if (program && strcasecmp(program, "Loc") == 0)
 		return loc_cmd_sta_exec_action(dut, conn, cmd);
+
+	if (program && strcasecmp(program, "LOCR2") == 0)
+		return loc_r2_cmd_sta_exec_action(dut, conn, cmd);
 
 	if (get_param(cmd, "url"))
 		return sta_exec_action_url(dut, conn, cmd);
@@ -11320,6 +11333,33 @@ sta_set_wireless_wpa3(struct sigma_dut *dut, struct sigma_conn *conn,
 }
 
 
+static enum sigma_cmd_result
+sta_set_wireless_loc_r2(struct sigma_dut *dut, struct sigma_conn *conn,
+			struct sigma_cmd *cmd)
+{
+	const char *i2rlmr_iftmr = get_param(cmd, "I2RLMRIFTMR");
+	const char *session_terminate = get_param(cmd, "FTMSessionTerminate");
+
+	if (i2rlmr_iftmr) {
+		dut->i2rlmr_iftmr = atoi(i2rlmr_iftmr);
+		sigma_dut_print(dut, DUT_MSG_INFO,
+				"i2rlmr_iftmr value is %d", dut->i2rlmr_iftmr);
+	}
+
+	if (session_terminate) {
+		int val = atoi(session_terminate);
+
+		sigma_dut_print(dut, DUT_MSG_INFO,
+				"session_terminate value is %d", val);
+		if (val)
+			dut->i2rlmrpolicy =
+				LOC_ABORT_ON_I2R_LMR_POLICY_MISMATCH;
+	}
+
+	return SUCCESS_SEND_STATUS;
+}
+
+
 static enum sigma_cmd_result cmd_sta_set_wireless(struct sigma_dut *dut,
 						  struct sigma_conn *conn,
 						  struct sigma_cmd *cmd)
@@ -11343,6 +11383,8 @@ static enum sigma_cmd_result cmd_sta_set_wireless(struct sigma_dut *dut,
 			return sta_set_wireless_60g(dut, conn, cmd);
 		if (strcasecmp(val, "WPA3") == 0)
 			return sta_set_wireless_wpa3(dut, conn, cmd);
+		if (strcasecmp(val, "LOCR2") == 0)
+			return sta_set_wireless_loc_r2(dut, conn, cmd);
 		send_resp(dut, conn, SIGMA_ERROR,
 			  "ErrorCode,Program value not supported");
 	} else {

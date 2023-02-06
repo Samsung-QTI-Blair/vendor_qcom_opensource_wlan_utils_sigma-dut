@@ -407,6 +407,12 @@ enum dpp_mdns_role {
 	DPP_MDNS_BOOTSTRAPPING,
 };
 
+enum loc_i2r_lmr_policy {
+	LOC_USE_DEFAULT_I2R_LMR_POLICY = 0,
+	LOC_FORCE_FTM_I2R_LMR_POLICY = 1,
+	LOC_ABORT_ON_I2R_LMR_POLICY_MISMATCH = 2,
+};
+
 struct sigma_dut {
 	const char *main_ifname;
 	char *main_ifname_2g;
@@ -905,6 +911,7 @@ struct sigma_dut {
 		PROGRAM_QM,
 		PROGRAM_HS2_R4,
 		PROGRAM_HS2_2022,
+		PROGRAM_LOCR2,
 	} program;
 
 	enum device_type {
@@ -1056,6 +1063,8 @@ struct sigma_dut {
 	int dscp_use_iptables;
 	int autoconnect_default;
 	int dhcp_client_running;
+	int i2rlmr_iftmr;
+	int i2rlmrpolicy;
 };
 
 
@@ -1287,6 +1296,8 @@ int loc_cmd_sta_preset_testparameters(struct sigma_dut *dut,
 				      struct sigma_conn *conn,
 				      struct sigma_cmd *cmd);
 int lowi_cmd_sta_reset_default(struct sigma_dut *dut, struct sigma_conn *conn,
+			       struct sigma_cmd *cmd);
+int loc_r2_cmd_sta_exec_action(struct sigma_dut *dut, struct sigma_conn *conn,
 			       struct sigma_cmd *cmd);
 
 /* dpp.c */
