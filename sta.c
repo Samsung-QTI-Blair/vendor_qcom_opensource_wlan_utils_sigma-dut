@@ -3591,11 +3591,9 @@ enum qca_sta_helper_config_params {
 	/* For the attribute QCA_WLAN_VENDOR_ATTR_CONFIG_RX_STBC */
 	STA_SET_RX_STBC,
 
-	/* For the attribute QCA_WLAN_VENDOR_ATTR_CONFIG_TX_MSDU_AGGREGATION */
-	STA_SET_TX_MSDU,
-
-	/* For the attribute QCA_WLAN_VENDOR_ATTR_CONFIG_RX_MSDU_AGGREGATION */
-	STA_SET_RX_MSDU,
+	/* For the attributes QCA_WLAN_VENDOR_ATTR_CONFIG_TX_MSDU_AGGREGATION
+	 * and QCA_WLAN_VENDOR_ATTR_CONFIG_RX_MSDU_AGGREGATION */
+	STA_SET_AMSDU,
 
 	/* For the attribute QCA_WLAN_VENDOR_ATTR_CONFIG_CHANNEL_WIDTH */
 	STA_SET_CHAN_WIDTH,
@@ -3616,6 +3614,16 @@ enum qca_sta_helper_config_params {
 
 	/* For the attribute QCA_WLAN_VENDOR_ATTR_CONFIG_EHT_MLO_MODE */
 	STA_SET_EHT_MLO_MODE,
+
+	/* For the attribute QCA_WLAN_VENDOR_ATTR_CONFIG_DYNAMIC_BW */
+	STA_SET_DYN_BW,
+
+	/* For the attributes QCA_WLAN_VENDOR_ATTR_CONFIG_TX_MPDU_AGGREGATION
+	 * and QCA_WLAN_VENDOR_ATTR_CONFIG_RX_MPDU_AGGREGATION */
+	STA_SET_AMPDU,
+
+	/* For the attribute QCA_WLAN_VENDOR_ATTR_CONFIG_NSS */
+	STA_SET_NSS,
 };
 
 
@@ -3663,14 +3671,15 @@ static int sta_config_params(struct sigma_dut *dut, const char *intf,
 		if (nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_CONFIG_RX_STBC, value))
 			goto fail;
 		break;
-	case STA_SET_TX_MSDU:
+	case STA_SET_AMSDU:
+		/* The driver expects both Tx and Rx aggregation parameters to
+		 * set A-MSDU configuration. Include both Tx and Rx MSDU
+		 * aggregation parameters in the command.
+		 */
 		if (nla_put_u8(msg,
 			       QCA_WLAN_VENDOR_ATTR_CONFIG_TX_MSDU_AGGREGATION,
-			       value))
-			goto fail;
-		break;
-	case STA_SET_RX_MSDU:
-		if (nla_put_u8(msg,
+			       value) ||
+		    nla_put_u8(msg,
 			       QCA_WLAN_VENDOR_ATTR_CONFIG_RX_MSDU_AGGREGATION,
 			       value))
 			goto fail;
@@ -3706,6 +3715,28 @@ static int sta_config_params(struct sigma_dut *dut, const char *intf,
 	case STA_SET_EHT_MLO_MODE:
 		if (nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_CONFIG_EHT_MLO_MODE,
 			       value))
+			goto fail;
+		break;
+	case STA_SET_DYN_BW:
+		if (nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_CONFIG_DYNAMIC_BW,
+			       value))
+			goto fail;
+		break;
+	case STA_SET_AMPDU:
+		/* The driver expects both Tx and Rx aggregation parameters to
+		 * set A-MPDU configuration. Include both Tx and Rx MPDU
+		 * aggregation parameters in the command.
+		 */
+		if (nla_put_u8(msg,
+			       QCA_WLAN_VENDOR_ATTR_CONFIG_TX_MPDU_AGGREGATION,
+			       value) ||
+		    nla_put_u8(msg,
+			       QCA_WLAN_VENDOR_ATTR_CONFIG_RX_MPDU_AGGREGATION,
+			       value))
+			goto fail;
+		break;
+	case STA_SET_NSS:
+		if (nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_CONFIG_NSS, value))
 			goto fail;
 		break;
 	}
@@ -5488,23 +5519,23 @@ static void ath_sta_set_11nrates(struct sigma_dut *dut, const char *intf,
 static void iwpriv_sta_set_amsdu(struct sigma_dut *dut, const char *intf,
 				 const char *val)
 {
-	char buf[60];
 	int ret;
+	int value;
 
 	if (strcmp(val, "1") == 0 || strcasecmp(val, "Enable") == 0)
-		snprintf(buf, sizeof(buf), "iwpriv %s amsdu 2", intf);
+		value = 2;
 	else
-		snprintf(buf, sizeof(buf), "iwpriv %s amsdu 1", intf);
+		value = 1;
 
-	ret = system(buf);
 #ifdef NL80211_SUPPORT
-	if (ret) {
-		int value = (strcasecmp(val, "Enable") == 0) ? 2 : 1;
-
-		ret = sta_config_params(dut, intf, STA_SET_TX_MSDU, value);
-		ret |= sta_config_params(dut, intf, STA_SET_RX_MSDU, value);
-	}
+	ret = sta_config_params(dut, intf, STA_SET_AMSDU, value);
+	if (!ret)
+		return;
+	sigma_dut_print(dut, DUT_MSG_ERROR, "set amsdu nl cmd failed");
+	/* Try to use the old iwpriv command instead. */
 #endif /* NL80211_SUPPORT */
+
+	ret = run_iwpriv(dut, intf, "amsdu %d", value);
 	if (ret)
 		sigma_dut_print(dut, DUT_MSG_ERROR, "iwpriv amsdu failed");
 }
@@ -5525,6 +5556,25 @@ static int iwpriv_sta_set_ampdu(struct sigma_dut *dut, const char *intf,
 	}
 
 	return 0;
+}
+
+
+static int wcn_sta_set_ampdu(struct sigma_dut *dut, const char *intf,
+			     int ampdu)
+{
+	int maxaggregation = 63;
+
+	if (ampdu)
+		ampdu = maxaggregation;
+
+#ifdef NL80211_SUPPORT
+	if (!sta_config_params(dut, intf, STA_SET_AMPDU, ampdu))
+		return 0;
+	sigma_dut_print(dut, DUT_MSG_ERROR, "set ampdu nl cmd failed");
+#endif /* NL80211_SUPPORT */
+
+	return iwpriv_sta_set_ampdu(dut, intf, ampdu);
+
 }
 
 
@@ -5598,14 +5648,11 @@ int ath_set_width(struct sigma_dut *dut, struct sigma_conn *conn,
 static int wcn_sta_set_sp_stream(struct sigma_dut *dut, const char *intf,
 				 const char *val)
 {
-	char buf[60];
 	int sta_nss;
 
 	if (strcmp(val, "1SS") == 0 || strcmp(val, "1") == 0) {
-		snprintf(buf, sizeof(buf), "iwpriv %s nss 1", intf);
 		sta_nss = 1;
 	} else if (strcmp(val, "2SS") == 0 || strcmp(val, "2") == 0) {
-		snprintf(buf, sizeof(buf), "iwpriv %s nss 2", intf);
 		sta_nss = 2;
 	} else {
 		sigma_dut_print(dut, DUT_MSG_ERROR,
@@ -5613,7 +5660,15 @@ static int wcn_sta_set_sp_stream(struct sigma_dut *dut, const char *intf,
 		return -1;
 	}
 
-	if (system(buf) != 0) {
+#ifdef NL80211_SUPPORT
+	if (!sta_config_params(dut, intf, STA_SET_NSS, sta_nss)) {
+		dut->sta_nss = sta_nss;
+		return 0;
+	}
+	sigma_dut_print(dut, DUT_MSG_ERROR, "set Nss nl cmd failed");
+#endif /* NL80211_SUPPORT */
+
+	if (run_iwpriv(dut, intf, "nss %d", sta_nss) < 0) {
 		sigma_dut_print(dut, DUT_MSG_ERROR,
 				"Failed to set SP_STREAM");
 		return -1;
@@ -6974,6 +7029,43 @@ static int sta_set_rts(struct sigma_dut *dut, const char *intf, int val)
 }
 
 
+static int wcn_config_dyn_bw_sig(struct sigma_dut *dut, const char *intf,
+				 const char *val)
+{
+	int set_val = -1;
+	int res;
+
+	if (strcasecmp(val, "enable") == 0)
+		set_val = 1;
+	else if (strcasecmp(val, "disable") == 0)
+		set_val = 0;
+	else
+		sigma_dut_print(dut, DUT_MSG_ERROR, "Unsupported DYN_BW_SGL");
+	if (set_val >= 0) {
+		res = sta_config_params(dut, intf, STA_SET_DYN_BW, set_val);
+		if (res) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Set DYN_BW_SGL using NL failed");
+			if (run_iwpriv(dut, intf,
+				       "cwmenable %d", set_val) != 0) {
+				sigma_dut_print(dut, DUT_MSG_ERROR,
+						"iwpriv cwmenable %d failed",
+						set_val);
+				return -1;
+			}
+		}
+	}
+
+	if (run_iwpriv(dut, intf, "cts_cbw 3") < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Failed to set cts_cbw in DYN_BW_SGNL");
+		return -1;
+	}
+
+	return 0;
+}
+
+
 static enum sigma_cmd_result
 cmd_sta_set_wireless_common(const char *intf, struct sigma_dut *dut,
 			    struct sigma_conn *conn, struct sigma_cmd *cmd)
@@ -7045,7 +7137,7 @@ cmd_sta_set_wireless_common(const char *intf, struct sigma_dut *dut,
 				ampdu ? "Enabling" : "Disabling");
 		snprintf(buf, sizeof(buf), "SET ampdu %d", ampdu);
 		if (wpa_command(intf, buf) < 0 &&
-		    iwpriv_sta_set_ampdu(dut, intf, ampdu) < 0) {
+		    wcn_sta_set_ampdu(dut, intf, ampdu)) {
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "ErrorCode,set aggr failed");
 			return STATUS_SENT_ERROR;
@@ -7170,33 +7262,8 @@ cmd_sta_set_wireless_common(const char *intf, struct sigma_dut *dut,
 	if (val) {
 		switch (get_driver_type(dut)) {
 		case DRIVER_WCN:
-			if (strcasecmp(val, "enable") == 0) {
-				snprintf(buf, sizeof(buf),
-					 "iwpriv %s cwmenable 1", intf);
-				if (system(buf) != 0) {
-					sigma_dut_print(dut, DUT_MSG_ERROR,
-							"iwpriv cwmenable 1 failed");
-					return ERROR_SEND_STATUS;
-				}
-			} else if (strcasecmp(val, "disable") == 0) {
-				snprintf(buf, sizeof(buf),
-					 "iwpriv %s cwmenable 0", intf);
-				if (system(buf) != 0) {
-					sigma_dut_print(dut, DUT_MSG_ERROR,
-							"iwpriv cwmenable 0 failed");
-					return ERROR_SEND_STATUS;
-				}
-			} else {
-				sigma_dut_print(dut, DUT_MSG_ERROR,
-						"Unsupported DYN_BW_SGL");
-			}
-
-			snprintf(buf, sizeof(buf), "iwpriv %s cts_cbw 3", intf);
-			if (system(buf) != 0) {
-				sigma_dut_print(dut, DUT_MSG_ERROR,
-						"Failed to set cts_cbw in DYN_BW_SGNL");
+			if (wcn_config_dyn_bw_sig(dut, intf, val) < 0)
 				return ERROR_SEND_STATUS;
-			}
 			break;
 		case DRIVER_ATHEROS:
 			novap_reset(dut, intf, 1);
@@ -7258,14 +7325,33 @@ cmd_sta_set_wireless_common(const char *intf, struct sigma_dut *dut,
 
 	val = get_param(cmd, "BW_SGNL");
 	if (val) {
+		int set_val;
+
 		if (strcasecmp(val, "Enable") == 0) {
-			run_iwpriv(dut, intf, "cwmenable 1");
+			set_val = 1;
 		} else if (strcasecmp(val, "Disable") == 0) {
-			/* TODO: Disable */
+			set_val = 0;
 		} else {
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "ErrorCode,BW_SGNL value not supported");
 			return STATUS_SENT_ERROR;
+		}
+
+		if (get_driver_type(dut) == DRIVER_WCN) {
+			res = sta_config_params(dut, intf, STA_SET_DYN_BW,
+						set_val);
+			if (res) {
+				sigma_dut_print(dut, DUT_MSG_ERROR,
+						"Set DYN_BW_SGL using NL failed");
+				if (run_iwpriv(dut, intf, "cwmenable %d") < 0) {
+					sigma_dut_print(dut, DUT_MSG_ERROR,
+							"iwpriv cwmenable %d failed",
+							set_val);
+					return ERROR_SEND_STATUS;
+				}
+			}
+		} else {
+			run_iwpriv(dut, intf, "cwmenable %d", set_val);
 		}
 	}
 
@@ -9280,7 +9366,7 @@ static void sta_reset_default_wcn(struct sigma_dut *dut, const char *intf,
 		}
 
 		/* Enable AMPDU by default */
-		iwpriv_sta_set_ampdu(dut, intf, 1);
+		wcn_sta_set_ampdu(dut, intf, 1);
 
 #ifdef NL80211_SUPPORT
 		if (wcn_set_he_ltf(dut, intf, QCA_WLAN_HE_LTF_AUTO)) {
@@ -9362,10 +9448,9 @@ static void sta_reset_default_wcn(struct sigma_dut *dut, const char *intf,
 
 			wpa_command(intf, "SET oce 0");
 
-			snprintf(buf, sizeof(buf), "iwpriv %s nss 1", intf);
-			if (system(buf) != 0) {
+			if (wcn_sta_set_sp_stream(dut, intf, "1SS") < 0) {
 				sigma_dut_print(dut, DUT_MSG_ERROR,
-						"iwpriv %s nss failed", intf);
+						"set nss to 1SS failed");
 			}
 
 #ifdef NL80211_SUPPORT
@@ -9446,13 +9531,10 @@ static void sta_reset_default_wcn(struct sigma_dut *dut, const char *intf,
 			wcn_sta_set_stbc(dut, intf, "1");
 
 			/* set nss to 2 */
-			snprintf(buf, sizeof(buf), "iwpriv %s nss 2", intf);
-			if (system(buf) != 0) {
+			if (wcn_sta_set_sp_stream(dut, intf, "2SS") < 0) {
 				sigma_dut_print(dut, DUT_MSG_ERROR,
-						"iwpriv %s nss 2 failed", intf);
+						"set nss to 2SS failed");
 			}
-			dut->sta_nss = 2;
-
 #ifdef NL80211_SUPPORT
 			/* Set HE_MCS to 0-11 */
 			if (sta_set_he_mcs(dut, intf, HE_80_MCS0_11)) {
@@ -11049,8 +11131,10 @@ cmd_sta_set_wireless_vht(struct sigma_dut *dut, struct sigma_conn *conn,
 		}
 		nss = atoi(result);
 
-		run_iwpriv(dut, intf, "nss %d", nss);
-		dut->sta_nss = nss;
+		if (wcn_sta_set_sp_stream(dut, intf, result) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"set nss to %s failed", result);
+		}
 
 		result = strtok_r(NULL, ";", &saveptr);
 		if (result == NULL) {
@@ -15167,14 +15251,22 @@ wcn_sta_set_rfeature_he(const char *intf, struct sigma_dut *dut,
 			goto failed;
 		}
 
-		snprintf(buf, sizeof(buf), "iwpriv %s nss %d", intf, nss);
-		if (system(buf) != 0) {
-			sigma_dut_print(dut, DUT_MSG_ERROR,
-					"nss_mcs_opt: iwpriv %s nss %d failed",
-					intf, nss);
-			goto failed;
+		if (nss == 2) {
+			/* set nss to 2 */
+			if (wcn_sta_set_sp_stream(dut, intf, "2SS") < 0) {
+				sigma_dut_print(dut, DUT_MSG_ERROR,
+						"set nss to 2SS failed");
+				goto failed;
+			}
 		}
-		dut->sta_nss = nss;
+		if (nss == 1) {
+			/* set nss to 1 */
+			if (wcn_sta_set_sp_stream(dut, intf, "1SS") < 0) {
+				sigma_dut_print(dut, DUT_MSG_ERROR,
+						"set nss to 1SS failed");
+				goto failed;
+			}
+		}
 
 		/* Add the MCS to the ratecode */
 		if (mcs >= 0 && mcs <= 11) {
