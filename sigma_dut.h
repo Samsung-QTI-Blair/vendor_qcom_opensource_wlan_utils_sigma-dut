@@ -1134,6 +1134,7 @@ struct sigma_dut {
 	int dhcp_client_running;
 	int i2rlmr_iftmr;
 	int i2rlmrpolicy;
+	int rnm_mfp;
 	struct device_pairing_info dev_info;
 	struct peer_pairing_info peer_info;
 };
@@ -1416,5 +1417,6 @@ int set_ipv6_addr(struct sigma_dut *dut, const char *ip, const char *mask,
 		  const char *ifname);
 void kill_pid(struct sigma_dut *dut, const char *pid_file);
 int get_ip_addr(const char *ifname, int ipv6, char *buf, size_t len);
+bool is_6ghz_freq(int freq);
 
 #endif /* SIGMA_DUT_H */
