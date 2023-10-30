@@ -89,6 +89,11 @@
 #define ETH_P_ARP 0x0806
 #endif
 
+#ifndef MAC2STR
+#define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
+#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
+#endif
+
 #define IPV6_ADDR_LEN 16
 
 struct sigma_dut;
@@ -212,7 +217,8 @@ struct sigma_stream {
 		SIGMA_PROFILE_IPTV,
 		SIGMA_PROFILE_TRANSACTION,
 		SIGMA_PROFILE_START_SYNC,
-		SIGMA_PROFILE_UAPSD
+		SIGMA_PROFILE_UAPSD,
+		SIGMA_PROFILE_BURST,
 	} profile;
 	int sender;
 	struct in_addr dst;
@@ -240,6 +246,11 @@ struct sigma_stream {
 	int stop;
 	int ta_send_in_progress;
 	int trans_proto;
+
+	int no_of_pkts_burst;
+	int burst_periodicity;
+	int dscp;
+	bool use_dscp;
 
 	/* Statistics */
 	int tx_act_frames; /*
@@ -1178,6 +1189,7 @@ struct sigma_dut {
 	struct mdnssd_apis mdnssd;
 	struct mdnss_discovery_info mdns_discover;
 #endif /* ANDROID_MDNS */
+	char host_name[100];
 };
 
 
@@ -1376,6 +1388,7 @@ int get_wps_forced_version(struct sigma_dut *dut, const char *str);
 int base64_encode(const char *src, size_t len, char *out, size_t out_len);
 unsigned char * base64_decode(const char *src, size_t len, size_t *out_len);
 int random_get_bytes(char *buf, size_t len);
+int random_mac_addr(u8 *addr);
 int get_enable_disable(const char *val);
 int wcn_driver_cmd(const char *ifname, char *buf);
 
@@ -1459,6 +1472,10 @@ int set_ipv6_addr(struct sigma_dut *dut, const char *ip, const char *mask,
 void kill_pid(struct sigma_dut *dut, const char *pid_file);
 int get_ip_addr(const char *ifname, int ipv6, char *buf, size_t len);
 bool is_6ghz_freq(int freq);
+
+enum sigma_cmd_result dev_start_test_log(struct sigma_dut *dut,
+					 struct sigma_conn *conn,
+					 struct sigma_cmd *cmd);
 
 /* dnssd.c */
 int mdnssd_init(struct sigma_dut *dut);
