@@ -85,6 +85,10 @@
 #define BIT_ULL(nr)		(1ULL << (nr))
 #endif
 
+#ifndef BIT
+#define BIT(x) (1U << (x))
+#endif
+
 #ifndef ETH_P_ARP
 #define ETH_P_ARP 0x0806
 #endif
@@ -100,6 +104,9 @@ struct sigma_dut;
 
 #define MAX_PARAMS 100
 #define MAX_RADIO 3
+#ifndef MAX_NUM_MLO_LINKS
+#define MAX_NUM_MLO_LINKS 15
+#endif
 
 #define NAN_AWARE_IFACE "wifi-aware0"
 #define BROADCAST_ADDR "255.255.255.255"
@@ -699,6 +706,7 @@ struct sigma_dut {
 		AP2_OSEN,
 		AP2_WPA2_PSK,
 		AP2_WPA2_OWE,
+		AP2_WPA2_EAP,
 	} ap_tag_key_mgmt[MAX_WLAN_TAGS - 1];
 	int ap_add_sha256;
 	int ap_add_sha384;
