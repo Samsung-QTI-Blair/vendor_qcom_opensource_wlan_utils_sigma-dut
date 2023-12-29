@@ -614,6 +614,7 @@ static int run_hostapd_cli(struct sigma_dut *dut, char *buf)
 	const char *bin;
 	enum driver_type drv = get_driver_type(dut);
 	char *sigma_hapd_file = sigma_hapd_ctrl;
+	const char *ifname = get_hostapd_ifname(dut);
 
 	if (file_exists("hostapd_cli"))
 		bin = "./hostapd_cli";
@@ -634,10 +635,11 @@ static int run_hostapd_cli(struct sigma_dut *dut, char *buf)
 	}
 
 	if (sigma_hapd_file)
-		snprintf(command, sizeof(command), "%s -p %s %s",
-			 bin, sigma_hapd_file, buf);
+		snprintf(command, sizeof(command), "%s -p %s -i %s %s",
+			 bin, sigma_hapd_file, ifname, buf);
 	else
-		snprintf(command, sizeof(command), "%s %s", bin, buf);
+		snprintf(command, sizeof(command), "%s -i %s %s", bin, ifname,
+			 buf);
 	return run_system(dut, command);
 }
 
@@ -2437,6 +2439,11 @@ static enum sigma_cmd_result cmd_ap_set_security(struct sigma_dut *dut,
 				   wlan_tag == 2) {
 				dut->ap_tag_key_mgmt[wlan_tag - 2] =
 					AP2_WPA2_OWE;
+			} else if ((strcasecmp(val, "WPA2-EAP") == 0 ||
+				    strcasecmp(val, "WPA2-Ent") == 0) &&
+				   wlan_tag == 2) {
+				dut->ap_tag_key_mgmt[wlan_tag - 2] =
+					AP2_WPA2_EAP;
 			} else {
 				send_resp(dut, conn, SIGMA_INVALID,
 					  "errorCode,Unsupported KEYMGNT");
@@ -8168,6 +8175,30 @@ static void set_second_ap_security_conf(FILE *file, struct sigma_dut *dut)
 		fprintf(file, "wpa_pairwise=%s\n",
 			hostapd_cipher_name(dut->ap_cipher));
 		fprintf(file, "wpa_passphrase=%s\n", dut->ap_tag_passphrase[0]);
+		break;
+	case AP2_WPA2_EAP:
+		fprintf(file, "ieee8021x=1\n");
+		fprintf(file, "wpa=2\n");
+		fprintf(file, "wpa_key_mgmt=WPA-EAP%s\n",
+			dut->ap_add_sha256 ? " WPA-EAP-SHA256" : "");
+		fprintf(file, "wpa_pairwise=CCMP\n");
+		if (dut->ap2_radius_port) {
+			fprintf(file, "auth_server_addr=%s\n",
+				dut->ap2_radius_ipaddr);
+			fprintf(file, "auth_server_port=%d\n",
+				dut->ap2_radius_port);
+			fprintf(file, "auth_server_shared_secret=%s\n",
+				dut->ap2_radius_password);
+		} else if (dut->ap_radius_port) {
+			fprintf(file, "auth_server_addr=%s\n",
+				dut->ap_radius_ipaddr);
+			fprintf(file, "auth_server_port=%d\n",
+				dut->ap_radius_port);
+			fprintf(file, "auth_server_shared_secret=%s\n",
+				dut->ap_radius_password);
+		} else
+			sigma_dut_print(dut, DUT_MSG_INFO,
+					"No RADIUS config for AP2");
 		break;
 	default:
 		fprintf(file, "wpa=1\n");
