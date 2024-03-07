@@ -6640,11 +6640,13 @@ static enum qca_wlan_vendor_phy_mode get_qca_vendor_phymode(const char *val)
 		return QCA_WLAN_VENDOR_PHY_MODE_11NA_HT40;
 	}
 
-	if (strcmp(val, "11ax") == 0 ||
-		   strcmp(val, "auto") == 0) {
-		/* IEEE80211_MODE_AUTO */
+	/* QCA_WLAN_VENDOR_PHY_MODE_11AX_HE160 */
+	if (strcmp(val, "11ax") == 0)
+		return QCA_WLAN_VENDOR_PHY_MODE_11AX_HE160;
+
+	/* IEEE80211_MODE_AUTO */
+	if (strcmp(val, "auto") == 0)
 		return QCA_WLAN_VENDOR_PHY_MODE_AUTO;
-	}
 
 	return -1;
 }
@@ -6907,6 +6909,12 @@ cmd_sta_preset_testparameters(struct sigma_dut *dut, struct sigma_conn *conn,
 		    dut->device_type == STA_testbed) {
 			sta_set_phymode(dut, intf, val);
 		}
+
+		/* Change the driver phymode to 11AX for QM program if
+		 * requested */
+		if (dut->program == PROGRAM_QM &&
+		    dut->device_mode == MODE_11AX)
+			sta_set_phymode(dut, intf, val);
 	}
 
 	val = get_param(cmd, "wmm");
@@ -16746,6 +16754,9 @@ static int cmd_sta_set_power_save_wcn(const char *intf, struct sigma_dut *dut,
 	const char *link_mac = get_param(cmd, "LinkMAC");
 
 	val = get_param(cmd, "powersave");
+	if (!val)
+		val = get_param(cmd, "Mode");
+
 	if (val) {
 		int ps;
 
