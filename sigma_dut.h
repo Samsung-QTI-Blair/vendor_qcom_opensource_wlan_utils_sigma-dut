@@ -637,6 +637,7 @@ struct sigma_dut {
 		AP_11ac,
 		AP_11ad,
 		AP_11ax,
+		AP_11be,
 		AP_inval
 	} ap_mode;
 	int ap_channel;
@@ -672,6 +673,7 @@ struct sigma_dut {
 		AP_40,
 		AP_80,
 		AP_160,
+		AP_320,
 		AP_80_80,
 		AP_AUTO
 	} ap_chwidth;
@@ -899,6 +901,9 @@ struct sigma_dut {
 
 	int ap_ocvc;
 	int ap_cad_unsolicited_proberesp;
+	int ltf_trig;
+	int eht_txmcs;
+	int ap_addba_amsdu;
 
 	enum value_not_set_enabled_disabled ap_oce;
 	enum value_not_set_enabled_disabled ap_filsdscv;
@@ -923,6 +928,11 @@ struct sigma_dut {
 	enum value_not_set_enabled_disabled ap_fullbw_ulmumimo;
 	enum value_not_set_enabled_disabled ap_twtinfoframerx;
 	enum value_not_set_enabled_disabled ap_ulmudata_disablerx;
+	enum value_not_set_enabled_disabled ap_btwt;
+	enum value_not_set_enabled_disabled nontrigger_txbf;
+	enum value_not_set_enabled_disabled ap_preamblepunct;
+	enum value_not_set_enabled_disabled eht_omctrl;
+	enum value_not_set_enabled_disabled eht_txemlomn;
 
 	enum ppdu {
 		PPDU_NOT_SET,
