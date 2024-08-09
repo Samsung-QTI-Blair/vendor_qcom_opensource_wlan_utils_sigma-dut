@@ -536,6 +536,8 @@ struct sigma_dut {
 	char *p2p_ifname_buf;
 	int use_5g;
 	int ap_band_6g;
+	int ap_center_freq;
+	int ap_punct_bitmap;
 	int sta_2g_started;
 	int sta_5g_started;
 
@@ -702,6 +704,7 @@ struct sigma_dut {
 		AP_WPA2_PSK_SHA256,
 		AP_WPA2_ENT_FT_EAP,
 		AP_OSEN,
+		AP_WPA3_SAE_EXT,
 	} ap_key_mgmt;
 	enum ap_tag_key_mgmt {
 		AP2_OPEN,
@@ -811,7 +814,8 @@ struct sigma_dut {
 	enum ap_vht_chwidth {
 		AP_20_40_VHT_OPER_CHWIDTH,
 		AP_80_VHT_OPER_CHWIDTH,
-		AP_160_VHT_OPER_CHWIDTH
+		AP_160_VHT_OPER_CHWIDTH,
+		AP_320_VHT_OPER_CHWIDTH
 	} ap_vht_chwidth;
 	int ap_txBF;
 	int ap_mu_txBF;
@@ -904,6 +908,7 @@ struct sigma_dut {
 	int ltf_trig;
 	int eht_txmcs;
 	int ap_addba_amsdu;
+	unsigned int ap_ehtmcs_map;
 
 	enum value_not_set_enabled_disabled ap_oce;
 	enum value_not_set_enabled_disabled ap_filsdscv;
@@ -947,6 +952,7 @@ struct sigma_dut {
 		BA_BUFSIZE_NOT_SET,
 		BA_BUFSIZE_64,
 		BA_BUFSIZE_256,
+		BA_BUFSIZE_1024,
 	} ap_ba_bufsize;
 
 	enum mimo {
@@ -1360,6 +1366,8 @@ int sta_set_addba_buf_size(struct sigma_dut *dut,
 			   const char *intf, int bufsize);
 int wcn_set_he_gi(struct sigma_dut *dut, const char *intf, u8 gi_val);
 #ifdef NL80211_SUPPORT
+int wcn_set_link_gi(struct sigma_dut *dut, const char *intf, int link_id,
+		    u8 gi_val);
 int wcn_set_he_ltf(struct sigma_dut *dut, const char *intf,
 		   enum qca_wlan_he_ltf_cfg ltf);
 #endif /* NL80211_SUPPORT */
@@ -1498,6 +1506,8 @@ int set_ipv6_addr(struct sigma_dut *dut, const char *ip, const char *mask,
 		  const char *ifname);
 void kill_pid(struct sigma_dut *dut, const char *pid_file);
 int get_ip_addr(const char *ifname, int ipv6, char *buf, size_t len);
+int chan_to_freq(int chan, bool is_6g);
+int freq_to_chan(int freq);
 bool is_6ghz_freq(int freq);
 
 enum sigma_cmd_result dev_start_test_log(struct sigma_dut *dut,
