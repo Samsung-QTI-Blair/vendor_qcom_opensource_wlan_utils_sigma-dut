@@ -2282,6 +2282,8 @@ static int set_wpa_common(struct sigma_dut *dut, struct sigma_conn *conn,
 			   strcasecmp(val, "Disable") == 0 ||
 			   strcasecmp(val, "Forced_Disabled") == 0) {
 			dut->sta_pmf = STA_PMF_DISABLED;
+			if (set_network(ifname, id, "ieee80211w", "0") < 0)
+				return -2;
 		} else {
 			send_resp(dut, conn, SIGMA_INVALID, "errorCode,Unrecognized PMF value");
 			return 0;
@@ -4110,6 +4112,10 @@ enum qca_sta_helper_config_params {
 	/* For the attribute
 	 * QCA_WLAN_VENDOR_ATTR_CONFIG_TTLM_NEGOTIATION_SUPPORT */
 	STA_SET_T2LM_NEG_SUPPORT,
+
+	/* For the attribute
+	 * QCA_WLAN_VENDOR_ATTR_CONFIG_FOLLOW_AP_PREFERENCE_FOR_CNDS_SELECT */
+	STA_SET_AP_PREF_FOR_CNDS_SEL,
 };
 
 
@@ -4250,6 +4256,12 @@ static int sta_config_params(struct sigma_dut *dut, const char *intf,
 	case STA_SET_T2LM_NEG_SUPPORT:
 		if (nla_put_u8(msg,
 			       QCA_WLAN_VENDOR_ATTR_CONFIG_TTLM_NEGOTIATION_SUPPORT,
+			       value))
+			goto fail;
+		break;
+	case STA_SET_AP_PREF_FOR_CNDS_SEL:
+		if (nla_put_u8(msg,
+			       QCA_WLAN_VENDOR_ATTR_CONFIG_FOLLOW_AP_PREFERENCE_FOR_CNDS_SELECT,
 			       value))
 			goto fail;
 		break;
@@ -9919,8 +9931,8 @@ static int wcn_set_he_tx_rate(struct sigma_dut *dut, const char *intf,
 
 
 #ifdef NL80211_SUPPORT
-static int wcn_set_link_gi(struct sigma_dut *dut, const char *intf, int link_id,
-			   u8 gi_val)
+int wcn_set_link_gi(struct sigma_dut *dut, const char *intf, int link_id,
+		    u8 gi_val)
 {
 	struct nlattr *attr;
 	struct nlattr *attr1;
@@ -10661,6 +10673,7 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 		wpa_command(intf, "SET gas_address3 0");
 		wpa_command(intf, "SET roaming 1");
 		wpa_command(intf, "SET interworking 1");
+		sta_config_params(dut, intf, STA_SET_AP_PREF_FOR_CNDS_SEL, 1);
 	}
 
 	free(dut->rsne_override);
@@ -12053,7 +12066,7 @@ cmd_sta_set_wireless_vht(struct sigma_dut *dut, struct sigma_conn *conn,
 		}
 
 		if (program && (strcasecmp(program, "HE") == 0 ||
-				strcasecmp(program, "EHT")) == 0) {
+				strcasecmp(program, "EHT") == 0)) {
 #ifdef NL80211_SUPPORT
 			enum he_mcs_config mcs_config;
 			int ret;

@@ -122,6 +122,8 @@ static int ath_ap_start_hostapd(struct sigma_dut *dut);
 static void ath_ap_set_params(struct sigma_dut *dut);
 static int kill_process(struct sigma_dut *dut, char *proc_name,
 			unsigned char is_proc_instance_one, int sig);
+static int get_oper_centr_freq_seq_idx(struct sigma_dut *dut, int chwidth,
+				       int channel);
 
 
 static int fwtest_cmd_wrapper(struct sigma_dut *dut, const char *arg,
@@ -745,6 +747,92 @@ static void set_vht_mcsmap_nss(struct sigma_dut *dut, int nss, int mcs)
 }
 
 
+static void set_eht_mcsmap_nss(struct sigma_dut *dut, int nss, int mcs)
+{
+	switch (mcs) {
+	case 7:
+		switch (nss) {
+		case 1:
+			dut->ap_ehtmcs_map = 0x1;
+			break;
+		case 2:
+			dut->ap_ehtmcs_map = 0x2;
+			break;
+		case 3:
+			dut->ap_ehtmcs_map = 0x3;
+			break;
+		case 4:
+			dut->ap_ehtmcs_map = 0x4;
+			break;
+		default:
+			dut->ap_ehtmcs_map = 0x4;
+			break;
+		}
+		break;
+	case 9:
+		switch (nss) {
+		case 1:
+			dut->ap_ehtmcs_map = 0x11;
+			break;
+		case 2:
+			dut->ap_ehtmcs_map = 0x22;
+			break;
+		case 3:
+			dut->ap_ehtmcs_map = 0x33;
+			break;
+		case 4:
+			dut->ap_ehtmcs_map = 0x44;
+			break;
+		default:
+			dut->ap_ehtmcs_map = 0x44;
+			break;
+		}
+		break;
+	case 11:
+		switch (nss) {
+		case 1:
+			dut->ap_ehtmcs_map = 0x111;
+			break;
+		case 2:
+			dut->ap_ehtmcs_map = 0x222;
+			break;
+		case 3:
+			dut->ap_ehtmcs_map = 0x333;
+			break;
+		case 4:
+			dut->ap_ehtmcs_map = 0x444;
+			break;
+		default:
+			dut->ap_ehtmcs_map = 0x444;
+			break;
+		}
+		break;
+	case 13:
+		switch (nss) {
+		case 1:
+			dut->ap_ehtmcs_map = 0x1111;
+			break;
+		case 2:
+			dut->ap_ehtmcs_map = 0x2222;
+			break;
+		case 3:
+			dut->ap_ehtmcs_map = 0x3333;
+			break;
+		case 4:
+			dut->ap_ehtmcs_map = 0x4444;
+			break;
+		default:
+			dut->ap_ehtmcs_map = 0x4444;
+			break;
+		}
+		break;
+	default:
+		dut->ap_ehtmcs_map = 0x4444;
+		break;
+	}
+}
+
+
 /* Get 2*nss bitmask */
 /* We are trying to pack 2-bit MCS values per NSS in a 16-bit wide field.
  * IEEE P802.11ax/D5.0, 9.4.2.247.4 supported HE-MCS And NSS Set field
@@ -848,6 +936,83 @@ static int wcn_set_txbf_periodic_ndp(struct sigma_dut *dut, const char *intf,
 #endif /* NL80211_SUPPORT */
 
 
+static int get_bitmap_from_punct_chlist(struct sigma_dut *dut,
+					const char *punct_channel_list)
+{
+	int center_chan_idx, start_chan_idx, end_chan_idx;
+	int chwidth, punct_bitmap = 0;
+
+	switch (dut->ap_chwidth) {
+	case AP_80:
+		chwidth = 80;
+		break;
+	case AP_160:
+		chwidth = 160;
+		break;
+	case AP_320:
+		chwidth = 320;
+		break;
+	default:
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"%s: Invalid channel width", __func__);
+		return -1;
+	}
+
+	if (dut->ap_center_freq)
+		center_chan_idx = freq_to_chan(dut->ap_center_freq);
+	else
+		center_chan_idx = get_oper_centr_freq_seq_idx(dut, chwidth,
+							      dut->ap_channel);
+	if (center_chan_idx < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"%s: couldn't get center channel index",
+				__func__);
+		return -1;
+	}
+
+	start_chan_idx = center_chan_idx - ((chwidth / 40 - 1) * 4) - 2;
+	end_chan_idx = center_chan_idx + ((chwidth / 40 - 1) * 4) + 2;
+	sigma_dut_print(dut, DUT_MSG_DEBUG,
+			"%s: center_chan_idx=%d, start_chan_idx=%d, end_chan_idx=%d",
+			__func__, center_chan_idx, start_chan_idx,
+			end_chan_idx);
+
+	if (punct_channel_list) {
+		char token[100];
+		const char *current_channel;
+		char *saveptr = NULL;
+		int channel, i;
+
+		strlcpy(token, punct_channel_list, sizeof(token));
+		current_channel = strtok_r(token, " ", &saveptr);
+		while (current_channel) {
+			channel = atoi(current_channel);
+			sigma_dut_print(dut, DUT_MSG_DEBUG,
+					"%s: puncture channel = %d", __func__,
+					channel);
+			if (channel == 0)
+				break;
+
+			for (i = 0; (start_chan_idx + i * 4) <= end_chan_idx;
+			     i++) {
+				if (channel != (start_chan_idx + i * 4))
+					continue;
+
+				punct_bitmap |= BIT(i);
+			}
+
+			/* Get the next channel */
+			current_channel = strtok_r(NULL, " ", &saveptr);
+		}
+	}
+
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "%s: punct_bitmap = %d", __func__,
+			punct_bitmap);
+
+	return punct_bitmap;
+}
+
+
 static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 						 struct sigma_conn *conn,
 						 struct sigma_cmd *cmd)
@@ -946,6 +1111,7 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 		if (wlan_tag == 1) {
 			const char *pos;
 
+			dut->ap_center_freq = 0;
 			dut->ap_channel = atoi(val);
 			pos = strchr(val, ';');
 			if (pos) {
@@ -959,10 +1125,20 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 
 	val = get_param(cmd, "ChnlFreq");
 	if (val) {
-		if (atoi(val) >= 5935 && atoi(val) <= 7115)
+		int freq = atoi(val);
+
+		if (is_6ghz_freq(freq))
 			dut->ap_band_6g = 1;
 		else
 			dut->ap_band_6g = 0;
+
+		dut->ap_center_freq = 0;
+		if (get_param(cmd, "CHANNEL")) {
+			const char *width = get_param(cmd, "WIDTH");
+
+			if (width && strcasecmp(width, "320") == 0)
+				dut->ap_center_freq = freq;
+		}
 	}
 
 	/* Overwrite the AP channel with DFS channel if configured */
@@ -1049,6 +1225,7 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 	case AP_11ac:
 		dut->use_5g = 1;
 		break;
+	case AP_11be:
 	case AP_11ax:
 		if (dut->ap_band_6g)
 			dut->use_5g = 1;
@@ -1057,7 +1234,6 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 		else if (dut->ap_channel >= 36 && dut->ap_channel <= 171)
 			dut->use_5g = 1;
 		break;
-	case AP_11be:
 	case AP_11ad:
 	case AP_inval:
 		break;
@@ -1310,12 +1486,17 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 			return STATUS_SENT;
 		}
 		mcs = atoi(result);
-		if (dut->program == PROGRAM_HE) {
+		if (dut->program == PROGRAM_HE || dut->program == PROGRAM_EHT) {
 			uint16_t mcsnssmap = 0;
 
+			/* To set mcs_nss_map for HE program */
 			get_he_mcs_nssmap((uint8_t *) &mcsnssmap, nss, mcs);
 			dut->he_mcsnssmap = (mcsnssmap << 16) | mcsnssmap;
 			dut->he_ul_mcs = mcs;
+
+			/* To set mcs_nss_map for EHT program */
+			if (dut->ap_mode == AP_11be)
+				set_eht_mcsmap_nss(dut, nss, mcs);
 		} else {
 			set_vht_mcsmap_nss(dut, nss, mcs);
 		}
@@ -2064,7 +2245,8 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 		if (strcasecmp(val, "le64") == 0) {
 			dut->ap_ba_bufsize = BA_BUFSIZE_64;
 		} else if (strcasecmp(val, "gt64") == 0) {
-			dut->ap_ba_bufsize = BA_BUFSIZE_256;
+			dut->ap_ba_bufsize = dut->program == PROGRAM_EHT ?
+				BA_BUFSIZE_1024 : BA_BUFSIZE_256;
 		} else {
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "errorCode,Unsupported ADDBAReq Buffer Size");
@@ -2075,7 +2257,8 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 	val = get_param(cmd, "ADDBAResp_BufSize");
 	if (val) {
 		if (strcasecmp(val, "gt64") == 0) {
-			dut->ap_ba_bufsize = BA_BUFSIZE_256;
+			dut->ap_ba_bufsize = dut->program == PROGRAM_EHT ?
+				BA_BUFSIZE_1024 : BA_BUFSIZE_256;
 		} else {
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "errorCode,Unsupported ADDBAResp Buffer Size");
@@ -2311,6 +2494,16 @@ static enum sigma_cmd_result cmd_ap_set_wireless(struct sigma_dut *dut,
 			dut->eht_txemlomn = VALUE_DISABLED;
 		else if (strcasecmp(val, "enable") == 0)
 			dut->eht_txemlomn = VALUE_ENABLED;
+	}
+
+	val = get_param(cmd, "PunctChannel");
+	if (val) {
+		dut->ap_punct_bitmap = get_bitmap_from_punct_chlist(dut, val);
+		if (dut->ap_punct_bitmap < 0) {
+			send_resp(dut, conn, SIGMA_INVALID,
+				  "errorCode,Invalid PunctChannel");
+			return STATUS_SENT_ERROR;
+		}
 	}
 
 	return SUCCESS_SEND_STATUS;
@@ -2661,7 +2854,14 @@ static enum sigma_cmd_result cmd_ap_set_security(struct sigma_dut *dut,
 		} else if (strcasecmp(val, "WPA2-SAE") == 0 ||
 			   strcasecmp(val, "SAE") == 0) {
 			dut->ap_key_mgmt = AP_WPA2_SAE;
-			dut->ap_cipher = AP_CCMP;
+			if (dut->ap_mode == AP_11be) {
+				dut->ap_cipher = AP_GCMP_256;
+				dut->ap_group_cipher = AP_GCMP_256;
+				dut->ap_key_mgmt = AP_WPA3_SAE_EXT;
+				dut->ap_group_mgmt_cipher = AP_BIP_GMAC_256;
+			} else {
+				dut->ap_cipher = AP_CCMP;
+			}
 			dut->ap_pmf = AP_PMF_REQUIRED;
 		} else if (strcasecmp(val, "WPA2-PSK-SAE") == 0) {
 			dut->ap_key_mgmt = AP_WPA2_PSK_SAE;
@@ -4454,6 +4654,9 @@ static int owrt_ap_config_vap(struct sigma_dut *dut)
 				owrt_ap_set_vap(dut, vap_count, "hidden", "1");
 			}
 			break;
+		case AP_WPA3_SAE_EXT:
+			/* TODO - not yet supported */
+			break;
 		}
 
 		if (!dut->ap_is_dual)
@@ -5421,6 +5624,7 @@ static int cmd_wcn_ap_config_commit(struct sigma_dut *dut,
 	case AP_WPA2_EAP_SHA256:
 	case AP_WPA2_PSK_SHA256:
 	case AP_WPA2_ENT_FT_EAP:
+	case AP_WPA3_SAE_EXT:
 		/* Not supported */
 		break;
 	}
@@ -7276,6 +7480,13 @@ static void ath_ap_set_params(struct sigma_dut *dut)
 			break;
 		}
 		run_iwpriv(dut, basedev, "txchainmask %d", txchainmask);
+
+		if (dut->ap_mode == AP_11be) {
+			run_iwpriv(dut, ifname, "nss %d", dut->ap_numsounddim);
+			/* 9 is the default testbed max MCS value supported for
+			 * 11be */
+			set_eht_mcsmap_nss(dut, dut->ap_numsounddim, 9);
+		}
 	}
 
 	if (dut->ap_numsounddim && dut->device_type == AP_testbed) {
@@ -7516,6 +7727,15 @@ static void ath_ap_set_params(struct sigma_dut *dut)
 	if (dut->eht_txemlomn == VALUE_DISABLED)
 		run_system_wrapper(dut, "wifitool %s setUnitTestCmd 13 2 7 1",
 				   ifname);
+
+	if (dut->device_type == AP_testbed && dut->ap_ehtmcs_map) {
+		run_iwpriv(dut, ifname, "eht_rxmcsmap 0x%x 0x%x 0x%x",
+			   dut->ap_ehtmcs_map, dut->ap_ehtmcs_map,
+			   dut->ap_ehtmcs_map);
+		run_iwpriv(dut, ifname, "eht_txmcsmap 0x%x 0x%x 0x%x",
+			   dut->ap_ehtmcs_map, dut->ap_ehtmcs_map,
+			   dut->ap_ehtmcs_map);
+	}
 }
 
 
@@ -7634,6 +7854,7 @@ static int cmd_ath_ap_config_commit(struct sigma_dut *dut,
 	case AP_WPA2_PSK_SHA256:
 	case AP_WPA2_ENT_FT_EAP:
 	case AP_OSEN:
+	case AP_WPA3_SAE_EXT:
 		/* TODO */
 		send_resp(dut, conn, SIGMA_ERROR,
 			  "errorCode,Unsupported KeyMgnt value");
@@ -7748,6 +7969,7 @@ static int cmd_ath_ap_config_commit(struct sigma_dut *dut,
 		case AP_WPA2_PSK_SHA256:
 		case AP_WPA2_ENT_FT_EAP:
 		case AP_OSEN:
+		case AP_WPA3_SAE_EXT:
 			/* TODO */
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "errorCode,Unsupported KeyMgnt value");
@@ -8110,6 +8332,8 @@ static int get_oper_center_freq_6g(int chwidth, int channel)
 		return (channel & 0xFF1) + 6;
 	case 160:
 		return (channel & 0xFE1) + 14;
+	case 320:
+		return (channel & 0xFC1) + 30;
 	default:
 		return -1;
 	}
@@ -8132,6 +8356,9 @@ static int get_6g_ch_op_class(int channel)
 
 	if (channel == 2)
 		return 136;
+
+	if ((channel & 0x1f) == 0x1f)
+		return 137;
 
 	return 0;
 }
@@ -8180,6 +8407,19 @@ static int is_ht40minus_chan(int chan)
 static int get_5g_channel_freq(int chan)
 {
 	return 5000 + chan * 5;
+}
+
+
+static int get_sec_channel_offset(int chan, bool is_6g)
+{
+	if (is_6g) {
+		if (((chan - 1) / 4) % 2)
+			return -1;
+		else
+			return 1;
+	}
+
+	return is_ht40plus_chan(chan) ? 1 : -1;
 }
 
 
@@ -8575,6 +8815,7 @@ enum sigma_cmd_result cmd_ap_config_commit(struct sigma_dut *dut,
 #ifdef ANDROID
 	struct group *gr;
 #endif /* ANDROID */
+	unsigned char addr[6];
 
 	drv = get_driver_type(dut);
 	mode = dut->ap_mode;
@@ -8673,6 +8914,7 @@ write_conf:
 	case AP_11ad:
 		fprintf(f, "hw_mode=ad\n");
 		break;
+	case AP_11be:
 	case AP_11ax:
 		/* In the case of dual band AP, both 2.4 GHz and 5 GHz hw_mode
 		 * should be set. So check the channel parameter of 2.4 GHz and
@@ -8712,12 +8954,15 @@ write_conf:
 	if ((drv == DRIVER_MAC80211 || drv == DRIVER_QNXNTO ||
 	     drv == DRIVER_LINUX_WCN) &&
 	    (mode == AP_11ng || mode == AP_11na ||
-	     (mode == AP_11ax && !dut->use_5g))) {
+	     ((mode == AP_11ax || mode == AP_11be) && !dut->use_5g))) {
 		int ht40plus = 0, ht40minus = 0, tx_stbc = 0;
 
 		fprintf(f, "ieee80211n=1\n");
-		if (mode == AP_11ax)
+		if (mode == AP_11ax || mode == AP_11be)
 			fprintf(f, "ieee80211ax=1\n");
+		if (mode == AP_11be)
+			fprintf(f, "ieee80211be=1\n");
+
 		if (mode == AP_11ng &&
 		    (dut->ap_chwidth == AP_40 ||
 		     (dut->ap_chwidth == AP_AUTO &&
@@ -8763,13 +9008,15 @@ write_conf:
 	if ((drv == DRIVER_MAC80211 || drv == DRIVER_QNXNTO ||
 	     drv == DRIVER_LINUX_WCN) &&
 	    (mode == AP_11ac ||
-	    (mode == AP_11ax && dut->use_5g))) {
+	    ((mode == AP_11ax || mode == AP_11be) && dut->use_5g))) {
 		int ht40plus = 0, ht40minus = 0;
 
 		fprintf(f, "ieee80211ac=1\n"
 			"ieee80211n=1\n");
-		if (mode == AP_11ax)
+		if (mode == AP_11ax || mode == AP_11be)
 			fprintf(f, "ieee80211ax=1\n");
+		if (mode == AP_11be)
+			fprintf(f, "ieee80211be=1\n");
 
 		/* configure ht_capab based on channel width */
 		if (dut->ap_chwidth != AP_20) {
@@ -8794,7 +9041,7 @@ write_conf:
 		}
 	}
 
-	if (drv == DRIVER_LINUX_WCN && mode == AP_11ax) {
+	if (drv == DRIVER_LINUX_WCN && (mode == AP_11ax || mode == AP_11be)) {
 		if (dut->ap_txBF) {
 			fprintf(f, "he_su_beamformer=1\n");
 			fprintf(f, "he_su_beamformee=1\n");
@@ -8805,6 +9052,39 @@ write_conf:
 			fprintf(f, "he_su_beamformee=0\n");
 			fprintf(f, "he_mu_beamformer=0\n");
 		}
+	}
+
+	if (drv == DRIVER_LINUX_WCN && mode == AP_11be) {
+		if (dut->ap_txBF) {
+			fprintf(f, "eht_su_beamformer=1\n");
+			fprintf(f, "eht_su_beamformee=1\n");
+			if (dut->ap_mu_txBF)
+				fprintf(f, "eht_mu_beamformer=1\n");
+		} else {
+			fprintf(f, "eht_su_beamformer=0\n");
+			fprintf(f, "eht_su_beamformee=0\n");
+			fprintf(f, "eht_mu_beamformer=0\n");
+		}
+
+		/* Add puncture channels bitmap */
+		if (dut->ap_punct_bitmap)
+			fprintf(f, "punct_bitmap=%d\n", dut->ap_punct_bitmap);
+
+		/* Single link AP MLD parameters */
+		if (get_hwaddr(get_main_ifname(dut), addr) != 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "errorCode,Failed to get MAC address");
+			return STATUS_SENT_ERROR;
+		}
+
+		fprintf(f, "mld_ap=1\n");
+		/* Use the same MLD and link MAC address */
+		fprintf(f, "mld_addr=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			addr[0], addr[1], addr[2],
+			addr[3], addr[4], addr[5]);
+		fprintf(f, "bssid=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			addr[0], addr[1], addr[2],
+			addr[3], addr[4], addr[5]);
 	}
 
 	if (conf_counter == 1) {
@@ -8946,9 +9226,11 @@ write_conf:
 	case AP_WPA2_PSK_SAE:
 	case AP_WPA2_PSK_SHA256:
 	case AP_WPA2_FT_PSK:
+	case AP_WPA3_SAE_EXT:
 		if (dut->ap_key_mgmt == AP_WPA2_PSK ||
 		    dut->ap_key_mgmt == AP_WPA2_SAE ||
 		    dut->ap_key_mgmt == AP_WPA2_PSK_SAE ||
+		    dut->ap_key_mgmt == AP_WPA3_SAE_EXT ||
 		    dut->ap_key_mgmt == AP_WPA2_PSK_SHA256 ||
 		    dut->ap_key_mgmt == AP_WPA2_FT_PSK)
 			fprintf(f, "wpa=2\n");
@@ -8960,6 +9242,8 @@ write_conf:
 			key_mgmt = "SAE";
 		else if (dut->ap_key_mgmt == AP_WPA2_PSK_SAE)
 			key_mgmt = "WPA-PSK SAE";
+		else if (dut->ap_key_mgmt == AP_WPA3_SAE_EXT)
+			key_mgmt = "SAE-EXT-KEY";
 		else
 			key_mgmt = "WPA-PSK";
 		switch (dut->ap_pmf) {
@@ -8976,6 +9260,8 @@ write_conf:
 				key_mgmt = "SAE";
 			else if (dut->ap_key_mgmt == AP_WPA2_PSK_SAE)
 				key_mgmt = "WPA-PSK-SHA256 SAE";
+			else if (dut->ap_key_mgmt == AP_WPA3_SAE_EXT)
+				key_mgmt = "SAE-EXT-KEY";
 			else
 				key_mgmt = "WPA-PSK-SHA256";
 			fprintf(f, "wpa_key_mgmt=%s\n", key_mgmt);
@@ -8990,6 +9276,10 @@ write_conf:
 		if (dut->ap_group_cipher != AP_NO_GROUP_CIPHER_SET)
 			fprintf(f, "group_cipher=%s\n",
 				hostapd_cipher_name(dut->ap_group_cipher));
+		if (dut->ap_group_mgmt_cipher != AP_NO_GROUP_MGMT_CIPHER_SET)
+			fprintf(f, "group_mgmt_cipher=%s\n",
+				hostapd_group_mgmt_cipher_name(
+					dut->ap_group_mgmt_cipher));
 		if (write_hostapd_conf_password(
 			    dut, f, dut->ap_key_mgmt == AP_WPA2_SAE) < 0) {
 			fclose(f);
@@ -9428,7 +9718,9 @@ skip_key_mgmt:
 		fprintf(f, "he_rts_threshold=1024\n");
 
 	if ((dut->program == PROGRAM_VHT) ||
-	    (dut->program == PROGRAM_HE && dut->use_5g)) {
+	    ((dut->program == PROGRAM_HE || dut->program == PROGRAM_EHT ||
+	      dut->program == PROGRAM_WPA3) &&
+	     dut->use_5g)) {
 		int vht_oper_centr_freq_idx;
 
 		/* Do not try to enable VHT or higher channel bandwidth for HE
@@ -9458,6 +9750,12 @@ skip_key_mgmt:
 			return 0;
 		}
 
+		if (dut->ap_center_freq) {
+			vht_oper_centr_freq_idx =
+				freq_to_chan(dut->ap_center_freq);
+			goto set_center_freq_idx_conf;
+		}
+
 		switch (dut->ap_chwidth) {
 		case AP_20:
 			dut->ap_vht_chwidth = AP_20_40_VHT_OPER_CHWIDTH;
@@ -9483,6 +9781,12 @@ skip_key_mgmt:
 				get_oper_centr_freq_seq_idx(dut, 160,
 							    dut->ap_channel);
 			break;
+		case AP_320:
+			dut->ap_vht_chwidth = AP_320_VHT_OPER_CHWIDTH;
+			vht_oper_centr_freq_idx =
+				get_oper_centr_freq_seq_idx(dut, 320,
+							    dut->ap_channel);
+			break;
 		default:
 			dut->ap_vht_chwidth = VHT_DEFAULT_OPER_CHWIDTH;
 			vht_oper_centr_freq_idx =
@@ -9490,17 +9794,28 @@ skip_key_mgmt:
 							    dut->ap_channel);
 			break;
 		}
+
+set_center_freq_idx_conf:
 		fprintf(f, "vht_oper_centr_freq_seg0_idx=%d\n",
 			vht_oper_centr_freq_idx);
 		fprintf(f, "vht_oper_chwidth=%d\n", dut->ap_vht_chwidth);
-		if (mode == AP_11ax) {
+		if (mode == AP_11ax || mode == AP_11be) {
 			fprintf(f, "he_oper_chwidth=%d\n", dut->ap_vht_chwidth);
 			fprintf(f, "he_oper_centr_freq_seg0_idx=%d\n",
 				vht_oper_centr_freq_idx);
-			if (dut->ap_band_6g)
-				fprintf(f, "op_class=%d\n",
-					get_6g_ch_op_class(dut->ap_channel));
 		}
+
+		if (mode == AP_11be) {
+			fprintf(f, "eht_oper_chwidth=%d\n",
+				dut->ap_vht_chwidth);
+			fprintf(f, "eht_oper_centr_freq_seg0_idx=%d\n",
+				vht_oper_centr_freq_idx);
+		}
+
+		if (dut->ap_band_6g)
+			fprintf(f, "op_class=%d\n",
+				get_6g_ch_op_class(vht_oper_centr_freq_idx));
+
 
 		find_ap_ampdu_exp_and_max_mpdu_len(dut);
 
@@ -9510,7 +9825,8 @@ skip_key_mgmt:
 		     dut->ap_tx_stbc == VALUE_ENABLED || dut->ap_mu_txBF ||
 		     dut->ap_ampdu_exp || dut->ap_max_mpdu_len ||
 		     dut->ap_chwidth == AP_160 ||
-		     dut->ap_chwidth == AP_80_80)) {
+		     dut->ap_chwidth == AP_80_80 ||
+		     dut->ap_chwidth == AP_320)) {
 			fprintf(f, "vht_capab=%s%s%s%s%s%s",
 				dut->ap_sgi80 ? "[SHORT-GI-80]" : "",
 				dut->ap_txBF ?
@@ -9520,7 +9836,8 @@ skip_key_mgmt:
 				(dut->ap_tx_stbc == VALUE_ENABLED) ?
 				"[TX-STBC-2BY1]" : "",
 				dut->ap_mu_txBF ? "[MU-BEAMFORMER]" : "",
-				dut->ap_chwidth == AP_160 ? "[VHT160]" :
+				dut->ap_chwidth == AP_160 ||
+				dut->ap_chwidth == AP_320 ? "[VHT160]" :
 				(dut->ap_chwidth == AP_80_80 ?
 				 "[VHT160-80PLUS80]" : ""));
 
@@ -9766,7 +10083,9 @@ skip_vht_parameters_set:
 	if (dut->ap_ba_bufsize != BA_BUFSIZE_NOT_SET) {
 		int buf_size;
 
-		if (dut->ap_ba_bufsize == BA_BUFSIZE_256)
+		if (dut->ap_ba_bufsize == BA_BUFSIZE_1024)
+			buf_size = 1024;
+		else if (dut->ap_ba_bufsize == BA_BUFSIZE_256)
 			buf_size = 256;
 		else
 			buf_size = 64;
@@ -10471,6 +10790,8 @@ static enum sigma_cmd_result cmd_ap_reset_default(struct sigma_dut *dut,
 	dut->ap_ampdu_exp = 0;
 	dut->ap_max_mpdu_len = 0;
 	dut->ap_band_6g = 0;
+	dut->ap_punct_bitmap = 0;
+	dut->ap_center_freq = 0;
 
 	dut->ap_rsn_preauth = 0;
 	dut->ap_wpsnfc = 0;
@@ -10755,7 +11076,7 @@ static enum sigma_cmd_result cmd_ap_reset_default(struct sigma_dut *dut,
 		dut->he_ul_mcs = 0;
 	}
 
-	if (dut->program == PROGRAM_HE) {
+	if (dut->program == PROGRAM_HE || dut->program == PROGRAM_EHT) {
 		if (dut->device_type == AP_testbed) {
 			dut->ap_ldpc = VALUE_DISABLED;
 			dut->ap_ba_bufsize = BA_BUFSIZE_64;
@@ -10846,6 +11167,7 @@ static enum sigma_cmd_result cmd_ap_reset_default(struct sigma_dut *dut,
 	dut->ap_addba_amsdu = -1;
 	dut->eht_omctrl = VALUE_NOT_SET;
 	dut->eht_txemlomn = VALUE_NOT_SET;
+	dut->ap_ehtmcs_map = 0;
 
 	if (is_60g_sigma_dut(dut)) {
 		dut->ap_mode = AP_11ad;
@@ -14452,20 +14774,107 @@ static enum sigma_cmd_result ath_ap_set_rfeature(struct sigma_dut *dut,
 }
 
 
+static int hostapd_chan_switch(struct sigma_dut *dut, const char *ifname,
+			       const char *type, int channel, int chwidth,
+			       int punct_bitmap)
+{
+	int res, center_freq_idx, channel_freq, sec_channel_offset, center_freq;
+	bool is_6g = !!dut->ap_band_6g;
+	char *mode = NULL, buf[256];
+
+	if (!ifname) {
+		sigma_dut_print(dut, DUT_MSG_ERROR, "%s: ifname is NULL",
+				__func__);
+		return -1;
+	}
+
+	if (!type) {
+		sigma_dut_print(dut, DUT_MSG_ERROR, "%s: type is NULL",
+				__func__);
+		return -1;
+	}
+
+	if (strcasecmp(type, "EHT") == 0) {
+		mode = "eht";
+	} else if (strcasecmp(type, "HE") == 0) {
+		mode = "he";
+	} else if (strcasecmp(type, "VHT") == 0) {
+		mode = "vht";
+	} else if (strcasecmp(type, "HT") == 0) {
+		mode = "ht";
+	} else {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"%s: unknown type %s", __func__, type);
+		return -1;
+	}
+
+	channel_freq = chan_to_freq(channel, is_6g);
+
+	if (chwidth > 20) {
+		if (is_6g || channel > 14)  {
+			sec_channel_offset = get_sec_channel_offset(channel,
+								    is_6g);
+			center_freq_idx = get_oper_centr_freq_seq_idx(dut,
+								      chwidth,
+								      channel);
+		} else {
+			sec_channel_offset = 1;
+			center_freq_idx = channel + 10;
+		}
+	} else {
+		sec_channel_offset = 0;
+		center_freq_idx = channel;
+	}
+
+	if (center_freq_idx < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"%s: Failed to get center frequency index",
+				__func__);
+		return -1;
+	}
+
+	center_freq = chan_to_freq(center_freq_idx, is_6g);
+
+	/* Issue the channel switch command */
+	res = snprintf(buf, sizeof(buf),
+		       "CHAN_SWITCH 10 %d sec_channel_offset=%d center_freq1=%d bandwidth=%d punct_bitmap=%d blocktx %s",
+		       channel_freq, sec_channel_offset, center_freq, chwidth,
+		       punct_bitmap, mode ? mode : "");
+	if (res < 0 || res >= sizeof(buf) || hapd_command(ifname, buf) < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Failed to initiate channel switch using hostapd control interface");
+		return -1;
+	}
+
+	return 0;
+}
+
+
 static int wcn_vht_chnum_band(struct sigma_dut *dut, const char *ifname,
-			      const char *val)
+			      const char *type, const char *val)
 {
 	char *token, *result;
-	int channel = 36;
+	int channel = 36, chwidth = 20, ret;
 	char *saveptr;
 
 	/* Extract the channel info */
 	token = strdup(val);
 	if (!token)
 		return -1;
+
 	result = strtok_r(token, ";", &saveptr);
 	if (result)
 		channel = atoi(result);
+
+	result = strtok_r(NULL, ";", &saveptr);
+	if (result)
+		chwidth = atoi(result);
+
+	ret = hostapd_chan_switch(dut, ifname, type, channel, chwidth, 0);
+	if (ret == 0 || dut->program == PROGRAM_EHT) {
+		free(token);
+		return ret;
+	}
 
 	/* Issue the channel switch command */
 	run_iwpriv(dut, ifname, "setChanChange %d", channel);
@@ -14475,17 +14884,30 @@ static int wcn_vht_chnum_band(struct sigma_dut *dut, const char *ifname,
 }
 
 
+static int wcn_ap_set_he_gi(struct sigma_dut *dut, const char *intf, u8 gi_val)
+{
+#ifdef NL80211_SUPPORT
+	return wcn_set_link_gi(dut, intf, ap_get_mlo_link_id(dut, intf),
+			       gi_val);
+#else /* NL80211_SUPPORT */
+	return -1;
+#endif /* NL80211_SUPPORT */
+}
+
+
 static enum sigma_cmd_result wcn_ap_set_rfeature(struct sigma_dut *dut,
 						 struct sigma_conn *conn,
 						 struct sigma_cmd *cmd)
 {
+	char buf[100];
 	const char *val;
 	const char *ifname;
+	const char *type = get_param(cmd, "type");
 
 	ifname = get_main_ifname(dut);
 
 	val = get_param(cmd, "chnum_band");
-	if (val && wcn_vht_chnum_band(dut, ifname, val) < 0)
+	if (val && wcn_vht_chnum_band(dut, ifname, type, val) < 0)
 		return ERROR_SEND_STATUS;
 
 	val = get_param(cmd, "txBandwidth");
@@ -14502,6 +14924,8 @@ static enum sigma_cmd_result wcn_ap_set_rfeature(struct sigma_dut *dut,
 			dut->ap_chwidth = 2;
 		} else if (strcasecmp(val, "160") == 0) {
 			dut->ap_chwidth = 3;
+		} else if (strcasecmp(val, "320") == 0) {
+			dut->ap_chwidth = 4;
 		} else {
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "ErrorCode,WIDTH not supported");
@@ -14512,6 +14936,86 @@ static enum sigma_cmd_result wcn_ap_set_rfeature(struct sigma_dut *dut,
 				return STATUS_SENT_ERROR;
 		} else {
 			sigma_dut_print(dut, DUT_MSG_DEBUG, "No change in BW");
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_ECWmin_BK");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_bk_cwmin %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_bk_cwmin");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_ECWmin_BE");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_be_cwmin %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_be_cwmin");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_ECWmin_VI");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_vi_cwmin %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_vi_cwmin");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_ECWmin_VO");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_vo_cwmin %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_vo_cwmin");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_AIFSN_BK");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_bk_aifs %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_bk_aifs");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_AIFSN_BE");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_be_aifs %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_be_aifs");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_AIFSN_VI");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_vi_aifs %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_vi_aifs");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "STA_WMMPE_AIFSN_VO");
+	if (val) {
+		snprintf(buf, sizeof(buf), "SET wmm_ac_vo_aifs %d", atoi(val));
+		if (hapd_command(ifname, buf) < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "ErrorCode,Failed to set wmm_ac_vo_aifs");
+			return STATUS_SENT_ERROR;
 		}
 	}
 
@@ -14538,9 +15042,9 @@ static enum sigma_cmd_result wcn_ap_set_rfeature(struct sigma_dut *dut,
 				  "errorCode,GI value not supported");
 			return STATUS_SENT_ERROR;
 		}
-		if (wcn_set_he_gi(dut, ifname, he_gi_val)) {
+		if (wcn_ap_set_he_gi(dut, ifname, he_gi_val)) {
 			sigma_dut_print(dut, DUT_MSG_INFO,
-					"wcn_set_he_gi failed, using iwpriv");
+					"wcn_ap_set_he_gi failed, using iwpriv");
 			run_iwpriv(dut, ifname, "enable_short_gi %d",
 				   auto_rate_gi);
 			run_iwpriv(dut, ifname, "enable_short_gi %d",
@@ -14567,6 +15071,56 @@ static enum sigma_cmd_result wcn_ap_set_rfeature(struct sigma_dut *dut,
 				"LTF cannot be set without NL80211_SUPPORT defined");
 		return ERROR_SEND_STATUS;
 #endif /* NL80211_SUPPORT */
+	}
+
+	val = get_param(cmd, "CodingType");
+	if (val) {
+		if (strcasecmp(val, "BCCCoding") == 0) {
+			dut->ap_bcc = VALUE_ENABLED;
+			dut->ap_ldpc = VALUE_DISABLED;
+		} else if (strcasecmp(val, "LDPCCoding") == 0) {
+			dut->ap_ldpc = VALUE_ENABLED;
+			dut->ap_bcc = VALUE_DISABLED;
+		} else {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "errorCode,Unsupported CodingType value");
+			return STATUS_SENT_ERROR;
+		}
+
+		wcn_config_ap_ldpc(dut, ifname);
+	}
+
+	val = get_param(cmd, "PunctChannel");
+	if (val) {
+		int chwidth;
+
+		switch (dut->ap_chwidth) {
+		case AP_80:
+			chwidth = 80;
+			break;
+		case AP_160:
+			chwidth = 160;
+			break;
+		case AP_320:
+			chwidth = 320;
+			break;
+		default:
+			return ERROR_SEND_STATUS;
+		}
+
+		dut->ap_punct_bitmap = get_bitmap_from_punct_chlist(dut, val);
+		if (dut->ap_punct_bitmap < 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				  "errorCode,Invalid punct bitmap");
+			return ERROR_SEND_STATUS;
+		}
+
+		if (hostapd_chan_switch(dut, ifname, type, dut->ap_channel,
+					chwidth, dut->ap_punct_bitmap) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to switch channel");
+			return ERROR_SEND_STATUS;
+		}
 	}
 
 	return SUCCESS_SEND_STATUS;
