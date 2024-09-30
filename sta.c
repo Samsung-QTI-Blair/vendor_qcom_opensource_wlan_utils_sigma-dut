@@ -2282,6 +2282,8 @@ static int set_wpa_common(struct sigma_dut *dut, struct sigma_conn *conn,
 			   strcasecmp(val, "Disable") == 0 ||
 			   strcasecmp(val, "Forced_Disabled") == 0) {
 			dut->sta_pmf = STA_PMF_DISABLED;
+			dut->beacon_prot = 0;
+			dut->ocvc = 0;
 			if (set_network(ifname, id, "ieee80211w", "0") < 0)
 				return -2;
 		} else {
@@ -7108,6 +7110,18 @@ static void sta_set_phymode(struct sigma_dut *dut, const char *intf,
 }
 
 
+#ifdef NL80211_SUPPORT
+static int wcn_sta_set_rsne_random_pmkid_cnt(struct sigma_dut *dut,
+					     const char *intf, uint8_t cnt)
+{
+	return wcn_wifi_test_config_set_u8(
+		dut, intf,
+		QCA_WLAN_VENDOR_ATTR_WIFI_TEST_CONFIG_RSNE_ADD_RANDOM_PMKIDS,
+		cnt);
+}
+#endif /* NL80211_SUPPORT */
+
+
 static enum sigma_cmd_result
 cmd_sta_preset_testparameters(struct sigma_dut *dut, struct sigma_conn *conn,
 			      struct sigma_cmd *cmd)
@@ -7639,6 +7653,152 @@ cmd_sta_preset_testparameters(struct sigma_dut *dut, struct sigma_conn *conn,
 		    wpa_command(intf, buf) != 0) {
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "ErrorCode,Failed to update Deauth_Reconnect_Policy");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+#ifdef NL80211_SUPPORT
+	val = get_param(cmd, "PMKID_Rand");
+	if (val && strcasecmp(val, "1") == 0 &&
+	    get_driver_type(dut) == DRIVER_WCN) {
+		uint8_t cnt;
+
+		if (random_get_bytes((char *) &cnt, sizeof(cnt)) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random number for PMKID count");
+			return ERROR_SEND_STATUS;
+		}
+
+		/* Enable including 9-11 randomized PMKIDs in RSNE of the
+		 * (Re)Association request frames */
+		cnt = 9 + cnt % 3;
+
+		if (wcn_sta_set_rsne_random_pmkid_cnt(dut, intf, cnt) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to configure random PMKID count");
+			return ERROR_SEND_STATUS;
+		}
+
+		dut->config_random_pmkid = 1;
+	}
+#endif /* NL80211_SUPPORT */
+
+	val = get_param(cmd, "Eapol_Reserved");
+	if (val && strcasecmp(val, "1") == 0) {
+		if (wpa_command(intf,
+				"SET eapol_2_key_info_set_mask c000") != 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				"ErrorCode,Failed to enable reserved bits in EAPOL-Key msg 2/4");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "Eapol_KDE_Rand");
+	if (val && strcasecmp(val, "1") == 0) {
+		char buf[1500];
+		uint8_t kdes[700], *pos, len;
+
+		pos = kdes;
+
+		/* KDE1 with random OUI and random length */
+		if (random_get_bytes((char *) &len, sizeof(len)) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random length for KDE1");
+			return ERROR_SEND_STATUS;
+		}
+		*pos++ = 0xdd;
+		*pos++ = len;
+		if (random_get_bytes((char *) pos, len) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for KDE1");
+			return ERROR_SEND_STATUS;
+		}
+		pos += len;
+
+		/* KDE2 with random OUI and 255 length */
+		*pos++ = 0xdd;
+		*pos++ = 255;
+		if (random_get_bytes((char *) pos, 255) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for KDE2");
+			return ERROR_SEND_STATUS;
+		}
+		pos += 255;
+
+		/* KDE3 with reserved RSN OUI type and some fixed length */
+		*pos++ = 0xdd;
+		*pos++ = 20;
+		WPA_PUT_BE32(pos, 0x000facf0);
+		pos += 4;
+		if (random_get_bytes((char *) pos, 16) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for KDE3");
+			return ERROR_SEND_STATUS;
+		}
+		pos += 16;
+
+		len = snprintf(buf, sizeof(buf), "TEST_EAPOL_M2_ELEMS ");
+		snprintf_hex(buf + len, sizeof(buf) - len, kdes, pos - kdes,
+			     false);
+
+		if (wpa_command(intf, buf) != 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				"ErrorCode,Failed to enable random KDEs for EAPOL 2/4");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "RSNXE_Rand");
+	if (val) {
+		char buf[1000], data_str[400], mask_str[400];
+		uint8_t data[150], mask[150], len;
+		int byte_offset, bit_offset = atoi(val);
+
+		/* Check if bit offset in valid range of Extended RSN
+		 * Capabilities field data */
+		byte_offset = bit_offset / 8;
+		if (bit_offset < 4 || byte_offset > 15)
+			return INVALID_SEND_STATUS;
+
+		/* Get random length which can fit 16 bytes of Extended RSN
+		 * Capabilities field and additional random number of bytes
+		 * between 8 to 128. */
+		if (random_get_bytes((char *) &len, sizeof(len)) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random length for RSNXE");
+			return ERROR_SEND_STATUS;
+		}
+		len = 16 + 8 + len % 121;
+
+		/* Clear mask till specified bit offset to preserve STA's
+		 * Extended RSN Capabilities field data in normal operation. */
+		memset(mask, 0, byte_offset + 1);
+		mask[byte_offset] |= 0xFF << (bit_offset % 8);
+
+		/* Enable mask for Extended RSN Capabilities length field */
+		mask[0] |= 0xF;
+
+		/* Enable mask for remaining data to set random data */
+		memset(&mask[byte_offset + 1], 0xFF, len - byte_offset - 1);
+
+		/* Generate random data for RSNXE */
+		if (random_get_bytes((char *) data, len) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for RSNXE");
+			return ERROR_SEND_STATUS;
+		}
+
+		/* Set Extended RSN Capabilities field length to 16 */
+		data[0] |= 0xF;
+
+		snprintf_hex(data_str, sizeof(data_str), data, len, false);
+		snprintf_hex(mask_str, sizeof(mask_str), mask, len, false);
+
+		snprintf(buf, sizeof(buf), "TEST_RSNXE_DATA %s %s", data_str,
+			 mask_str);
+		if (wpa_command(intf, buf) != 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				"ErrorCode,Failed to set random RSNXE data");
 			return STATUS_SENT_ERROR;
 		}
 	}
@@ -11128,6 +11288,12 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 	    dut->config_rsnie == 1) {
 		dut->config_rsnie = 0;
 		sta_config_params(dut, intf, STA_SET_RSNIE, 0);
+	}
+
+	if (get_driver_type(dut) == DRIVER_WCN &&
+	    dut->config_random_pmkid == 1) {
+		wcn_sta_set_rsne_random_pmkid_cnt(dut, intf, 0);
+		dut->config_random_pmkid = 0;
 	}
 #endif /* NL80211_SUPPORT */
 
