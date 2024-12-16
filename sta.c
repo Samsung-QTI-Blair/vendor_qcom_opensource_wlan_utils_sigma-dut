@@ -2282,6 +2282,8 @@ static int set_wpa_common(struct sigma_dut *dut, struct sigma_conn *conn,
 			   strcasecmp(val, "Disable") == 0 ||
 			   strcasecmp(val, "Forced_Disabled") == 0) {
 			dut->sta_pmf = STA_PMF_DISABLED;
+			dut->beacon_prot = 0;
+			dut->ocvc = 0;
 			if (set_network(ifname, id, "ieee80211w", "0") < 0)
 				return -2;
 		} else {
@@ -3417,11 +3419,384 @@ static enum sigma_cmd_result sta_set_owe(struct sigma_dut *dut,
 }
 
 
+static int get_key_mgmt_capa(struct sigma_dut *dut)
+{
+	char key_mgmt[500];
+	char *res, *saveptr = NULL;
+
+	if (dut->key_mgmt_capa)
+		goto out;
+
+	if (wpa_command_resp(get_main_ifname(dut), "GET_CAPABILITY key_mgmt",
+			     key_mgmt, sizeof(key_mgmt)) < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Failed to fetch key managements");
+		return -1;
+	}
+
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "Fetched key managements: %s",
+			key_mgmt);
+
+	res = strtok_r(key_mgmt, " ", &saveptr);
+	while (res) {
+		if (strcmp(res, "WPA-PSK"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_WPA_PSK);
+		if (strcmp(res, "WPA-PSK-SHA256"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_PSK_SHA256);
+		if (strcmp(res, "FT-PSK"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_PSK);
+		if (strcmp(res, "SAE"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_SAE);
+		if (strcmp(res, "FT-SAE"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_SAE);
+		if (strcmp(res, "SAE-EXT-KEY"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_SAE_EXT_KEY);
+		if (strcmp(res, "FT-SAE-EXT-KEY"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_SAE_EXT_KEY);
+
+		res = strtok_r(NULL, " ", &saveptr);
+	}
+out:
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "Supported key managements: %x",
+			dut->key_mgmt_capa);
+	return 0;
+}
+
+
+static int get_pairwise_ciphers_capa(struct sigma_dut *dut)
+{
+	char pairwise_ciphers[200];
+	char *res, *saveptr = NULL;
+
+	if (dut->pairwise_ciphers_capa)
+		goto out;
+
+	if (wpa_command_resp(get_main_ifname(dut), "GET_CAPABILITY pairwise",
+			     pairwise_ciphers, sizeof(pairwise_ciphers)) < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Failed to fetch pairwise ciphers");
+		return -1;
+	}
+
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "Fetched pairwise ciphers: %s",
+			pairwise_ciphers);
+
+	res = strtok_r(pairwise_ciphers, " ", &saveptr);
+	while (res) {
+		if (strcmp(res, "CCMP"))
+			dut->pairwise_ciphers_capa |= BIT(SIGMA_CIPHER_CCMP);
+		if (strcmp(res, "GCMP"))
+			dut->pairwise_ciphers_capa |= BIT(SIGMA_CIPHER_GCMP);
+		if (strcmp(res, "CCMP-256"))
+			dut->pairwise_ciphers_capa |=
+				BIT(SIGMA_CIPHER_CCMP_256);
+		if (strcmp(res, "GCMP-256"))
+			dut->pairwise_ciphers_capa |=
+				BIT(SIGMA_CIPHER_GCMP_256);
+
+		res = strtok_r(NULL, " ", &saveptr);
+	}
+out:
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "Supported pairwise ciphers: %x",
+			dut->pairwise_ciphers_capa);
+	return 0;
+}
+
+
+static int get_group_ciphers_capa(struct sigma_dut *dut)
+{
+	char group_ciphers[200];
+	char *res, *saveptr = NULL;
+
+	if (dut->group_ciphers_capa)
+		goto out;
+
+	if (wpa_command_resp(get_main_ifname(dut), "GET_CAPABILITY group",
+			     group_ciphers, sizeof(group_ciphers)) < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Failed to fetch group ciphers");
+		return -1;
+	}
+
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "Fetched group ciphers: %s",
+			group_ciphers);
+
+	res = strtok_r(group_ciphers, " ", &saveptr);
+	while (res) {
+		if (strcmp(res, "CCMP"))
+			dut->group_ciphers_capa |= BIT(SIGMA_CIPHER_CCMP);
+		if (strcmp(res, "GCMP"))
+			dut->group_ciphers_capa |= BIT(SIGMA_CIPHER_GCMP);
+		if (strcmp(res, "CCMP-256"))
+			dut->group_ciphers_capa |= BIT(SIGMA_CIPHER_CCMP_256);
+		if (strcmp(res, "GCMP-256"))
+			dut->group_ciphers_capa |= BIT(SIGMA_CIPHER_GCMP_256);
+
+		res = strtok_r(NULL, " ", &saveptr);
+	}
+out:
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "Supported group ciphers: %x",
+			dut->group_ciphers_capa);
+	return 0;
+}
+
+
+static int get_group_mgmt_ciphers_capa(struct sigma_dut *dut)
+{
+	char group_mgmt_ciphers[200];
+	char *res, *saveptr = NULL;
+
+	if (dut->group_mgmt_ciphers_capa)
+		goto out;
+
+	if (wpa_command_resp(get_main_ifname(dut), "GET_CAPABILITY group_mgmt",
+			     group_mgmt_ciphers,
+			     sizeof(group_mgmt_ciphers)) < 0) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Failed to fetch device group management ciphers");
+		return -1;
+	}
+
+	sigma_dut_print(dut, DUT_MSG_DEBUG,
+			"Fetched group management ciphers: %s",
+			group_mgmt_ciphers);
+
+	res = strtok_r(group_mgmt_ciphers, " ", &saveptr);
+	while (res) {
+		if (strcmp(res, "AES-128-CMAC"))
+			dut->group_mgmt_ciphers_capa |=
+				BIT(SIGMA_CIPHER_AES_128_CMAC);
+		if (strcmp(res, "BIP-GMAC-128"))
+			dut->group_mgmt_ciphers_capa |=
+				BIT(SIGMA_CIPHER_BIP_GMAC_128);
+		if (strcmp(res, "BIP-GMAC-256"))
+			dut->group_mgmt_ciphers_capa |=
+				BIT(SIGMA_CIPHER_BIP_GMAC_256);
+		if (strcmp(res, "BIP-CMAC-256"))
+			dut->group_mgmt_ciphers_capa |=
+				BIT(SIGMA_CIPHER_BIP_CMAC_256);
+
+		res = strtok_r(NULL, " ", &saveptr);
+	}
+out:
+	sigma_dut_print(dut, DUT_MSG_DEBUG,
+			"Supported group management ciphers: %x",
+			dut->group_mgmt_ciphers_capa);
+	return 0;
+}
+
+
+static enum sigma_cmd_result sta_set_wpa3_transition(struct sigma_dut *dut,
+						     struct sigma_conn *conn,
+						     struct sigma_cmd *cmd)
+{
+	const char *intf = get_param(cmd, "Interface");
+	const char *passphrase = get_param(cmd, "passphrase");
+	const char *ifname;
+	char buf[500];
+	char *pos;
+	int id, ret, rem;
+
+	if (!passphrase || !intf)
+		return INVALID_SEND_STATUS;
+
+	if (get_key_mgmt_capa(dut) < 0 ||
+	    get_pairwise_ciphers_capa(dut) < 0 ||
+	    get_group_ciphers_capa(dut) < 0 ||
+	    get_group_mgmt_ciphers_capa(dut) < 0)
+		return ERROR_SEND_STATUS;
+
+	if (!(dut->key_mgmt_capa & BIT(SIGMA_AKM_WPA_PSK)) ||
+	    !(dut->key_mgmt_capa & BIT(SIGMA_AKM_SAE)) ||
+	    !(dut->pairwise_ciphers_capa & BIT(SIGMA_CIPHER_CCMP)) ||
+	    !(dut->group_ciphers_capa & BIT(SIGMA_CIPHER_CCMP)) ||
+	    !(dut->group_mgmt_ciphers_capa & BIT(SIGMA_CIPHER_AES_128_CMAC))) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Device doesn't support basic WPA3 transition mode");
+		return ERROR_SEND_STATUS;
+	}
+
+	if (dut->device_mode == MODE_11BE &&
+	    (!(dut->key_mgmt_capa & BIT(SIGMA_AKM_SAE_EXT_KEY)) ||
+	     !(dut->pairwise_ciphers_capa & BIT(SIGMA_CIPHER_GCMP_256)) ||
+	     !(dut->group_ciphers_capa & BIT(SIGMA_CIPHER_GCMP_256)) ||
+	     !(dut->group_mgmt_ciphers_capa &
+	       BIT(SIGMA_CIPHER_BIP_GMAC_256)))) {
+		sigma_dut_print(dut, DUT_MSG_ERROR,
+				"Device doesn't support basic WPA3 transition mode needed for 11BE mode");
+		return ERROR_SEND_STATUS;
+	}
+
+	if (strcmp(intf, get_main_ifname(dut)) == 0)
+		ifname = get_station_ifname(dut);
+	else
+		ifname = intf;
+
+	id = add_network_common(dut, conn, ifname, cmd);
+	if (id < 0)
+		return id;
+
+	if (set_network(ifname, id, "proto", "WPA2") < 0)
+		return ERROR_SEND_STATUS;
+
+	/* Set key_mgmt */
+	pos = buf;
+	rem = sizeof(buf);
+
+	ret = snprintf(pos, rem, "WPA-PSK SAE");
+	pos += ret;
+	rem -= ret;
+
+	if (dut->key_mgmt_capa & BIT(SIGMA_AKM_PSK_SHA256)) {
+		ret = snprintf(pos, rem, " WPA-PSK-SHA256");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->key_mgmt_capa & BIT(SIGMA_AKM_FT_PSK)) {
+		ret = snprintf(pos, rem, " FT-PSK");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->key_mgmt_capa & BIT(SIGMA_AKM_FT_SAE)) {
+		ret = snprintf(pos, rem, " FT-SAE");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->key_mgmt_capa & BIT(SIGMA_AKM_SAE_EXT_KEY)) {
+		ret = snprintf(pos, rem, " SAE-EXT-KEY");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->key_mgmt_capa & BIT(SIGMA_AKM_FT_SAE_EXT_KEY)) {
+		ret = snprintf(pos, rem, " FT-SAE-EXT-KEY");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (set_network(ifname, id, "key_mgmt", buf) < 0)
+		return ERROR_SEND_STATUS;
+
+	/* Set pairwise ciphers */
+	pos = buf;
+	rem = sizeof(buf);
+
+	ret = snprintf(pos, rem, "CCMP");
+	pos += ret;
+	rem -= ret;
+
+	if (dut->pairwise_ciphers_capa & BIT(SIGMA_CIPHER_GCMP)) {
+		ret = snprintf(pos, rem, " GCMP");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->pairwise_ciphers_capa & BIT(SIGMA_CIPHER_GCMP_256)) {
+		ret = snprintf(pos, rem, " GCMP-256");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->pairwise_ciphers_capa & BIT(SIGMA_CIPHER_CCMP_256)) {
+		ret = snprintf(pos, rem, " CCMP-256");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (set_network(ifname, id, "pairwise", buf) < 0)
+		return ERROR_SEND_STATUS;
+
+	/* Set group ciphers */
+	pos = buf;
+	rem = sizeof(buf);
+
+	ret = snprintf(pos, rem, "CCMP");
+	pos += ret;
+	rem -= ret;
+
+	if (dut->group_ciphers_capa & BIT(SIGMA_CIPHER_GCMP)) {
+		ret = snprintf(pos, rem, " GCMP");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->group_ciphers_capa & BIT(SIGMA_CIPHER_GCMP_256)) {
+		ret = snprintf(pos, rem, " GCMP-256");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->group_ciphers_capa & BIT(SIGMA_CIPHER_CCMP_256)) {
+		ret = snprintf(pos, rem, " CCMP-256");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (set_network(ifname, id, "group", buf) < 0)
+		return ERROR_SEND_STATUS;
+
+	/* Set group management ciphers */
+	pos = buf;
+	rem = sizeof(buf);
+
+	ret = snprintf(pos, rem, "AES-128-CMAC");
+	pos += ret;
+	rem -= ret;
+
+	if (dut->group_mgmt_ciphers_capa & BIT(SIGMA_CIPHER_BIP_GMAC_128)) {
+		ret = snprintf(pos, rem, " BIP-GMAC-128");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->group_mgmt_ciphers_capa & BIT(SIGMA_CIPHER_BIP_GMAC_256)) {
+		ret = snprintf(pos, rem, " BIP-GMAC-256");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (dut->group_mgmt_ciphers_capa & BIT(SIGMA_CIPHER_BIP_CMAC_256)) {
+		ret = snprintf(pos, rem, " BIP-CMAC-256");
+		pos += ret;
+		rem -= ret;
+	}
+
+	if (set_network(ifname, id, "group_mgmt", buf) < 0)
+		return ERROR_SEND_STATUS;
+
+	if (set_network_quoted(ifname, id, "psk", passphrase) < 0)
+		return ERROR_SEND_STATUS;
+
+	if (set_network(ifname, id, "ieee80211w", "1") < 0)
+		return ERROR_SEND_STATUS;
+
+	if (wpa_command(ifname, "SET sae_pwe 2") != 0)
+		return ERROR_SEND_STATUS;
+
+	if (dut->beacon_prot && set_network(ifname, id, "beacon_prot", "1") < 0)
+		return ERROR_SEND_STATUS;
+
+	if (dut->ocvc && dut->device_mode != MODE_11BE &&
+	    set_network(ifname, id, "ocv", "1") < 0)
+		return ERROR_SEND_STATUS;
+
+	return SUCCESS_SEND_STATUS;
+}
+
+
 static enum sigma_cmd_result cmd_sta_set_security(struct sigma_dut *dut,
 						  struct sigma_conn *conn,
 						  struct sigma_cmd *cmd)
 {
 	const char *type = get_param(cmd, "Type");
+	const char *ssid = get_param(cmd, "SSID");
+	const char *passphrase = get_param(cmd, "passphrase");
+
+	if (ssid && passphrase && !type)
+		return sta_set_wpa3_transition(dut, conn, cmd);
 
 	if (type == NULL) {
 		send_resp(dut, conn, SIGMA_ERROR,
@@ -6735,6 +7110,18 @@ static void sta_set_phymode(struct sigma_dut *dut, const char *intf,
 }
 
 
+#ifdef NL80211_SUPPORT
+static int wcn_sta_set_rsne_random_pmkid_cnt(struct sigma_dut *dut,
+					     const char *intf, uint8_t cnt)
+{
+	return wcn_wifi_test_config_set_u8(
+		dut, intf,
+		QCA_WLAN_VENDOR_ATTR_WIFI_TEST_CONFIG_RSNE_ADD_RANDOM_PMKIDS,
+		cnt);
+}
+#endif /* NL80211_SUPPORT */
+
+
 static enum sigma_cmd_result
 cmd_sta_preset_testparameters(struct sigma_dut *dut, struct sigma_conn *conn,
 			      struct sigma_cmd *cmd)
@@ -6921,6 +7308,13 @@ cmd_sta_preset_testparameters(struct sigma_dut *dut, struct sigma_conn *conn,
 		    dut->device_type == STA_testbed) {
 			sta_set_phymode(dut, intf, val);
 		}
+
+		/* Change the mode in case of WCN driver and testbed for WPA3
+		 * program. */
+		if (get_driver_type(dut) == DRIVER_WCN &&
+		    dut->device_type == STA_testbed &&
+		    dut->program == PROGRAM_WPA3)
+			sta_set_phymode(dut, intf, val);
 
 		/* Change the driver phymode to 11AX for QM program if
 		 * requested */
@@ -7259,6 +7653,152 @@ cmd_sta_preset_testparameters(struct sigma_dut *dut, struct sigma_conn *conn,
 		    wpa_command(intf, buf) != 0) {
 			send_resp(dut, conn, SIGMA_ERROR,
 				  "ErrorCode,Failed to update Deauth_Reconnect_Policy");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+#ifdef NL80211_SUPPORT
+	val = get_param(cmd, "PMKID_Rand");
+	if (val && strcasecmp(val, "1") == 0 &&
+	    get_driver_type(dut) == DRIVER_WCN) {
+		uint8_t cnt;
+
+		if (random_get_bytes((char *) &cnt, sizeof(cnt)) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random number for PMKID count");
+			return ERROR_SEND_STATUS;
+		}
+
+		/* Enable including 9-11 randomized PMKIDs in RSNE of the
+		 * (Re)Association request frames */
+		cnt = 9 + cnt % 3;
+
+		if (wcn_sta_set_rsne_random_pmkid_cnt(dut, intf, cnt) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to configure random PMKID count");
+			return ERROR_SEND_STATUS;
+		}
+
+		dut->config_random_pmkid = 1;
+	}
+#endif /* NL80211_SUPPORT */
+
+	val = get_param(cmd, "Eapol_Reserved");
+	if (val && strcasecmp(val, "1") == 0) {
+		if (wpa_command(intf,
+				"SET eapol_2_key_info_set_mask c000") != 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				"ErrorCode,Failed to enable reserved bits in EAPOL-Key msg 2/4");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "Eapol_KDE_Rand");
+	if (val && strcasecmp(val, "1") == 0) {
+		char buf[1500];
+		uint8_t kdes[700], *pos, len;
+
+		pos = kdes;
+
+		/* KDE1 with random OUI and random length */
+		if (random_get_bytes((char *) &len, sizeof(len)) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random length for KDE1");
+			return ERROR_SEND_STATUS;
+		}
+		*pos++ = 0xdd;
+		*pos++ = len;
+		if (random_get_bytes((char *) pos, len) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for KDE1");
+			return ERROR_SEND_STATUS;
+		}
+		pos += len;
+
+		/* KDE2 with random OUI and 255 length */
+		*pos++ = 0xdd;
+		*pos++ = 255;
+		if (random_get_bytes((char *) pos, 255) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for KDE2");
+			return ERROR_SEND_STATUS;
+		}
+		pos += 255;
+
+		/* KDE3 with reserved RSN OUI type and some fixed length */
+		*pos++ = 0xdd;
+		*pos++ = 20;
+		WPA_PUT_BE32(pos, 0x000facf0);
+		pos += 4;
+		if (random_get_bytes((char *) pos, 16) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for KDE3");
+			return ERROR_SEND_STATUS;
+		}
+		pos += 16;
+
+		len = snprintf(buf, sizeof(buf), "TEST_EAPOL_M2_ELEMS ");
+		snprintf_hex(buf + len, sizeof(buf) - len, kdes, pos - kdes,
+			     false);
+
+		if (wpa_command(intf, buf) != 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				"ErrorCode,Failed to enable random KDEs for EAPOL 2/4");
+			return STATUS_SENT_ERROR;
+		}
+	}
+
+	val = get_param(cmd, "RSNXE_Rand");
+	if (val) {
+		char buf[1000], data_str[400], mask_str[400];
+		uint8_t data[150], mask[150], len;
+		int byte_offset, bit_offset = atoi(val);
+
+		/* Check if bit offset in valid range of Extended RSN
+		 * Capabilities field data */
+		byte_offset = bit_offset / 8;
+		if (bit_offset < 4 || byte_offset > 15)
+			return INVALID_SEND_STATUS;
+
+		/* Get random length which can fit 16 bytes of Extended RSN
+		 * Capabilities field and additional random number of bytes
+		 * between 8 to 128. */
+		if (random_get_bytes((char *) &len, sizeof(len)) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random length for RSNXE");
+			return ERROR_SEND_STATUS;
+		}
+		len = 16 + 8 + len % 121;
+
+		/* Clear mask till specified bit offset to preserve STA's
+		 * Extended RSN Capabilities field data in normal operation. */
+		memset(mask, 0, byte_offset + 1);
+		mask[byte_offset] |= 0xFF << (bit_offset % 8);
+
+		/* Enable mask for Extended RSN Capabilities length field */
+		mask[0] |= 0xF;
+
+		/* Enable mask for remaining data to set random data */
+		memset(&mask[byte_offset + 1], 0xFF, len - byte_offset - 1);
+
+		/* Generate random data for RSNXE */
+		if (random_get_bytes((char *) data, len) < 0) {
+			sigma_dut_print(dut, DUT_MSG_ERROR,
+					"Failed to get random data for RSNXE");
+			return ERROR_SEND_STATUS;
+		}
+
+		/* Set Extended RSN Capabilities field length to 16 */
+		data[0] |= 0xF;
+
+		snprintf_hex(data_str, sizeof(data_str), data, len, false);
+		snprintf_hex(mask_str, sizeof(mask_str), mask, len, false);
+
+		snprintf(buf, sizeof(buf), "TEST_RSNXE_DATA %s %s", data_str,
+			 mask_str);
+		if (wpa_command(intf, buf) != 0) {
+			send_resp(dut, conn, SIGMA_ERROR,
+				"ErrorCode,Failed to set random RSNXE data");
 			return STATUS_SENT_ERROR;
 		}
 	}
@@ -10097,11 +10637,14 @@ static void sta_reset_default_wcn(struct sigma_dut *dut, const char *intf,
 	int ret;
 #endif /* NL80211_SUPPORT */
 
+	/* reset phymode to auto */
 	if (dut->program == PROGRAM_HE || dut->program == PROGRAM_EHT ||
-	    dut->device_mode == MODE_11BE || dut->program == PROGRAM_QM) {
-		/* resetting phymode to auto in case of HE program */
+	    dut->device_mode == MODE_11BE || dut->program == PROGRAM_QM ||
+	    dut->program == PROGRAM_WPA3)
 		sta_set_phymode(dut, intf, "auto");
 
+	if (dut->program == PROGRAM_HE || dut->program == PROGRAM_EHT ||
+	    dut->device_mode == MODE_11BE || dut->program == PROGRAM_QM) {
 		/* reset the rate to Auto rate */
 		if (wcn_set_he_tx_rate(dut, intf, 0x0FFF, 2)) {
 			/* 0xFFF value for setting MCS 0-12 */
@@ -10746,6 +11289,12 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 		dut->config_rsnie = 0;
 		sta_config_params(dut, intf, STA_SET_RSNIE, 0);
 	}
+
+	if (get_driver_type(dut) == DRIVER_WCN &&
+	    dut->config_random_pmkid == 1) {
+		wcn_sta_set_rsne_random_pmkid_cnt(dut, intf, 0);
+		dut->config_random_pmkid = 0;
+	}
 #endif /* NL80211_SUPPORT */
 
 	if (dev_role && strcasecmp(dev_role, "STA-CFON") == 0) {
@@ -10761,6 +11310,7 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 	ret = wpa_command_resp(intf, "GET_CAPABILITY beacon_prot", resp,
 			       sizeof(resp));
 	dut->beacon_prot = ret == 0 && strncmp(resp, "supported", 9) == 0;
+	wpa_command(intf, "SET rsn_overriding 1");
 
 	if (sta_set_client_privacy(dut, conn, intf,
 				   dut->device_type == STA_dut &&
@@ -12707,6 +13257,14 @@ sta_set_wireless_wpa3(struct sigma_dut *dut, struct sigma_conn *conn,
 				  "errorCode,Failed to enable/disable G2 transmit");
 			return STATUS_SENT_ERROR;
 		}
+	}
+
+	val = get_param(cmd, "MRSNO");
+	if (val && strcasecmp(val, "Disable") == 0 &&
+	    wpa_command(intf, "SET rsn_overriding 0") < 0) {
+		send_resp(dut, conn, SIGMA_ERROR,
+			  "errorCode,Failed to disable RSN overriding");
+		return STATUS_SENT_ERROR;
 	}
 
 	if (dut->device_mode == MODE_11BE)
