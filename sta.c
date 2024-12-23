@@ -9005,6 +9005,10 @@ static enum sigma_cmd_result cmd_sta_disconnect(struct sigma_dut *dut,
 {
 	const char *intf = get_param(cmd, "Interface");
 	const char *val = get_param(cmd, "maintain_profile");
+	const char *disconnect_iface = get_param(cmd, "DisconnectInterface");
+
+	if (disconnect_iface && strcmp(disconnect_iface, "P2P") == 0)
+		intf = get_p2p_group_ifname(dut, intf);
 
 	if (dut->program == PROGRAM_OCE ||
 	    dut->program == PROGRAM_HE ||
@@ -9595,6 +9599,32 @@ static enum sigma_cmd_result sta_get_parameter_wpa3(struct sigma_dut *dut,
 }
 
 
+static enum sigma_cmd_result sta_get_pasn_ptk(struct sigma_dut *dut,
+					      struct sigma_conn *conn,
+					      struct sigma_cmd *cmd)
+{
+	const char *intf = get_param(cmd, "Interface");
+	char buf[200], resp[256];
+
+	if (dut->program != PROGRAM_P2P) {
+		send_resp(dut, conn, SIGMA_ERROR,
+			  "ErrorCode,PASNPTK not supported");
+		return STATUS_SENT_ERROR;
+	}
+
+	if (wpa_command_resp(intf, "P2P_GET_PASNPTK", buf, sizeof(buf)) < 0 ||
+	    strncmp(buf, "UNKNOWN COMMAND", 15) == 0) {
+		send_resp(dut, conn, SIGMA_ERROR,
+			  "ErrorCode,PASNPTK not supported");
+		return STATUS_SENT_ERROR;
+	}
+
+	snprintf(resp, sizeof(resp), "PASNPTK,%s", buf);
+	send_resp(dut, conn, SIGMA_COMPLETE, resp);
+	return STATUS_SENT;
+}
+
+
 static enum sigma_cmd_result sta_get_pmk(struct sigma_dut *dut,
 					 struct sigma_conn *conn,
 					 struct sigma_cmd *cmd)
@@ -9654,6 +9684,26 @@ static enum sigma_cmd_result sta_get_pmk(struct sigma_dut *dut,
 }
 
 
+static enum sigma_cmd_result sta_get_p2p_pmk(struct sigma_dut *dut,
+					     struct sigma_conn *conn,
+					     struct sigma_cmd *cmd)
+{
+	const char *intf = get_param(cmd, "Interface");
+	char buf[200], resp[256];
+
+	if (wpa_command_resp(intf, "P2P_PMK_GET", buf, sizeof(buf)) < 0 ||
+	    strncmp(buf, "UNKNOWN COMMAND", 15) == 0) {
+		send_resp(dut, conn, SIGMA_ERROR,
+			  "ErrorCode,P2P_PMK_GET not supported");
+		return STATUS_SENT_ERROR;
+	}
+
+	snprintf(resp, sizeof(resp), "PMK,%s", buf);
+	send_resp(dut, conn, SIGMA_COMPLETE, resp);
+	return STATUS_SENT;
+}
+
+
 static enum sigma_cmd_result cmd_sta_get_parameter(struct sigma_dut *dut,
 						   struct sigma_conn *conn,
 						   struct sigma_cmd *cmd)
@@ -9664,8 +9714,14 @@ static enum sigma_cmd_result cmd_sta_get_parameter(struct sigma_dut *dut,
 	if (!parameter)
 		return INVALID_SEND_STATUS;
 
-	if (strcasecmp(parameter, "PMK") == 0)
+	if (strcasecmp(parameter, "PASNPTK") == 0)
+		return sta_get_pasn_ptk(dut, conn, cmd);
+
+	if (strcasecmp(parameter, "PMK") == 0) {
+		if (dut->program == PROGRAM_P2P)
+			return sta_get_p2p_pmk(dut, conn, cmd);
 		return sta_get_pmk(dut, conn, cmd);
+	}
 
 	if (!program)
 		return INVALID_SEND_STATUS;
@@ -11388,7 +11444,7 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 		wpa_command(intf, "STA_AUTOCONNECT 0");
 
 	if (dut->program != PROGRAM_VHT)
-		return cmd_sta_p2p_reset(dut, conn, cmd);
+		return sta_p2p_reset_default(dut, conn, cmd);
 
 	return 1;
 }
@@ -11482,6 +11538,7 @@ static enum sigma_cmd_result cmd_sta_exec_action(struct sigma_dut *dut,
 						 struct sigma_cmd *cmd)
 {
 	const char *program = get_param(cmd, "Prog");
+	const char *method = get_param(cmd, "MethodType");
 
 	if (program && !get_param(cmd, "interface"))
 		return -1;
@@ -11489,6 +11546,14 @@ static enum sigma_cmd_result cmd_sta_exec_action(struct sigma_dut *dut,
 	if (program && strcasecmp(program, "NAN") == 0)
 		return nan_cmd_sta_exec_action(dut, conn, cmd);
 #endif /* ANDROID_NAN */
+
+	if (program && strcasecmp(program, "P2P") == 0) {
+		dut->program = sigma_program_to_enum(program);
+		if (method &&
+		    (strcasecmp(method, "ADVERTISE") == 0 ||
+		     strcasecmp(method, "SEEK") == 0))
+			return usd_cmd_sta_exec_action(dut, conn, cmd);
+	}
 
 	if (program && strcasecmp(program, "Loc") == 0)
 		return loc_cmd_sta_exec_action(dut, conn, cmd);
