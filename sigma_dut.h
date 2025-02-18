@@ -556,6 +556,38 @@ enum sigma_cipher_suites {
 	SIGMA_CIPHER_BIP_CMAC_256,
 };
 
+enum oper_chan_width {
+	CONF_OPER_CHWIDTH_USE_HT = 0,
+	CONF_OPER_CHWIDTH_80MHZ = 1,
+	CONF_OPER_CHWIDTH_160MHZ = 2,
+	CONF_OPER_CHWIDTH_80P80MHZ = 3,
+	CONF_OPER_CHWIDTH_2160MHZ,
+	CONF_OPER_CHWIDTH_4320MHZ,
+	CONF_OPER_CHWIDTH_6480MHZ,
+	CONF_OPER_CHWIDTH_8640MHZ,
+	CONF_OPER_CHWIDTH_40MHZ_6GHZ,
+	CONF_OPER_CHWIDTH_320MHZ,
+};
+
+struct twt_config_params {
+	bool is_user_config;
+	bool is_bcast_twt;
+	bool unavailability_mode;
+	bool twt_trigger;
+	int cmd_type;
+	int flow_type;
+	int protection;
+	int target_wake_time;
+	int wake_interval_mantissa;
+	int wake_interval_exp;
+	int nominal_min_wake_dur;
+	int bcast_twt_id;
+	int bcast_twt_persis;
+	int bcast_twt_recommdn;
+	int responder_pm;
+	int ifindex;
+};
+
 struct sigma_dut {
 	const char *main_ifname;
 	char *main_ifname_2g;
@@ -1269,6 +1301,8 @@ struct sigma_dut {
 	bool usd_enabled;
 	bool p2p_r2_capable;
 	u8 pasn_type;
+	bool is_p2p_twt_power_mgmt_enabled;
+	struct twt_config_params twt_param;
 };
 
 
@@ -1420,6 +1454,8 @@ int wcn_set_he_ltf(struct sigma_dut *dut, const char *intf,
 #endif /* NL80211_SUPPORT */
 void stop_dscp_policy_mon_thread(struct sigma_dut *dut);
 void free_dscp_policy_table(struct sigma_dut *dut);
+int sta_twt_request(struct sigma_dut *dut, struct sigma_conn *conn,
+		    struct sigma_cmd *cmd);
 
 /* p2p.c */
 void p2p_register_cmds(void);
@@ -1432,6 +1468,7 @@ void stop_dhcp(struct sigma_dut *dut, const char *group_ifname, int go);
 int p2p_discover_peer(struct sigma_dut *dut, const char *ifname,
 		      const char *peer, int full);
 const char * get_p2p_group_ifname(struct sigma_dut *dut, const char *ifname);
+const char * get_group_ifname(struct sigma_dut *dut, const char *ifname);
 enum sigma_cmd_result sta_p2p_reset_default(struct sigma_dut *dut,
 					    struct sigma_conn *conn,
 					    struct sigma_cmd *cmd);
@@ -1452,6 +1489,9 @@ int parse_mac_address(struct sigma_dut *dut, const char *arg,
 int is_60g_sigma_dut(struct sigma_dut *dut);
 unsigned int channel_to_freq(struct sigma_dut *dut, unsigned int channel);
 unsigned int freq_to_channel(unsigned int freq);
+int freq_to_channel_and_class(unsigned int freq, int sec_channel,
+			      enum oper_chan_width chanwidth,
+			      int *op_class, int *channel);
 int is_ipv6_addr(const char *str);
 void convert_mac_addr_to_ipv6_lladdr(u8 *mac_addr, char *ipv6_buf,
 				     size_t buf_len);
