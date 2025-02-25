@@ -534,6 +534,14 @@ enum sigma_akm_suites {
 	SIGMA_AKM_FT_SAE,
 	SIGMA_AKM_SAE_EXT_KEY,
 	SIGMA_AKM_FT_SAE_EXT_KEY,
+	SIGMA_AKM_FT_802_1X,
+	SIGMA_AKM_FT_802_1X_SHA384,
+	SIGMA_AKM_SUITE_B,
+	SIGMA_AKM_SUITE_B_192,
+	SIGMA_AKM_FILS_SHA256,
+	SIGMA_AKM_FILS_SHA384,
+	SIGMA_AKM_FT_FILS_SHA256,
+	SIGMA_AKM_FT_FILS_SHA384,
 };
 
 enum sigma_cipher_suites {
@@ -1071,6 +1079,7 @@ struct sigma_dut {
 		PROGRAM_HS2_2022,
 		PROGRAM_LOCR2,
 		PROGRAM_EHT,
+		PROGRAM_PR,
 	} program;
 
 	enum device_type {
@@ -1209,6 +1218,11 @@ struct sigma_dut {
 		SAE_PWE_LOOP,
 		SAE_PWE_H2E
 	} sae_pwe;
+	enum {
+		SEC_OPEN,
+		SEC_MAC,
+		SEC_PHY
+	} sectype;
 	int owe_ptk_workaround;
 	struct dut_hw_modes hw_modes;
 	int ocvc;
@@ -1490,6 +1504,8 @@ int loc_cmd_sta_preset_testparameters(struct sigma_dut *dut,
 int lowi_cmd_sta_reset_default(struct sigma_dut *dut, struct sigma_conn *conn,
 			       struct sigma_cmd *cmd);
 int loc_r2_cmd_sta_exec_action(struct sigma_dut *dut, struct sigma_conn *conn,
+			       struct sigma_cmd *cmd);
+int loc_pr_cmd_dev_exec_action(struct sigma_dut *dut, struct sigma_conn *conn,
 			       struct sigma_cmd *cmd);
 
 /* dpp.c */

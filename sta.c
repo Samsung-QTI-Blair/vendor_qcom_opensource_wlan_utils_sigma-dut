@@ -195,6 +195,8 @@ struct wil_wmi_p2p_cfg_cmd {
 } __attribute__((packed));
 #endif /* __linux__ */
 
+static int get_key_mgmt_capa(struct sigma_dut *dut);
+
 #ifdef ANDROID
 
 static int add_ipv6_rule(struct sigma_dut *dut, const char *ifname);
@@ -1510,6 +1512,14 @@ static void enable_sta_ipv6_configuration(struct sigma_dut *dut,
 {
 #if defined(ANDROID)
 	snprintf(buf, buf_size,
+		 "sysctl net.ipv6.conf.%s.disable_ipv6=1",
+		 ifname);
+	sigma_dut_print(dut, DUT_MSG_DEBUG, "Run: %s", buf);
+	if (system(buf) != 0) {
+		sigma_dut_print(dut, DUT_MSG_DEBUG,
+				"Failed to disable IPv6 address");
+	}
+	snprintf(buf, buf_size,
 		 "sysctl net.ipv6.conf.%s.disable_ipv6=0",
 		 ifname);
 	sigma_dut_print(dut, DUT_MSG_DEBUG, "Run: %s", buf);
@@ -2670,7 +2680,7 @@ static enum sigma_cmd_result cmd_sta_set_psk(struct sigma_dut *dut,
 		return -2;
 
 	val = get_param(cmd, "ProfileConnect");
-	if (dut->program == PROGRAM_LOCR2 &&
+	if ((dut->program == PROGRAM_LOCR2 || dut->program == PROGRAM_PR) &&
 	    val && strcasecmp(val, "disable") == 0) {
 		snprintf(buf, sizeof(buf), "ENABLE_NETWORK %d no-connect", id);
 		wpa_command(ifname, buf);
@@ -2820,12 +2830,37 @@ static int set_eap_common(struct sigma_dut *dut, struct sigma_conn *conn,
 		}
 
 		erp = 1;
-	} else if (!akm && dut->sta_pmf == STA_PMF_OPTIONAL) {
-		if (set_network(ifname, id, "key_mgmt",
-				"WPA-EAP WPA-EAP-SHA256") < 0)
-			return -2;
 	} else if (!akm) {
-		if (set_network(ifname, id, "key_mgmt", "WPA-EAP") < 0)
+		strlcpy(buf, "WPA-EAP", sizeof(buf));
+
+		if (dut->sta_pmf == STA_PMF_OPTIONAL)
+			strlcat(buf, " WPA-EAP-SHA256", sizeof(buf));
+
+		if (!val && dut->program == PROGRAM_WPA3 &&
+		    get_key_mgmt_capa(dut) == 0) {
+			if (dut->key_mgmt_capa & BIT(SIGMA_AKM_FT_802_1X))
+				strlcat(buf, " FT-EAP", sizeof(buf));
+			if (dut->key_mgmt_capa &
+			    BIT(SIGMA_AKM_FT_802_1X_SHA384))
+				strlcat(buf, " FT-EAP-SHA384", sizeof(buf));
+			if (dut->key_mgmt_capa & BIT(SIGMA_AKM_SUITE_B))
+				strlcat(buf, " WPA-EAP-SUITE-B", sizeof(buf));
+			if (dut->key_mgmt_capa & BIT(SIGMA_AKM_SUITE_B_192))
+				strlcat(buf, " WPA-EAP-SUITE-B-192",
+					sizeof(buf));
+			if (dut->key_mgmt_capa & BIT(SIGMA_AKM_FILS_SHA256))
+				strlcat(buf, " FILS-SHA256", sizeof(buf));
+			if (dut->key_mgmt_capa & BIT(SIGMA_AKM_FILS_SHA384))
+				strlcat(buf, " FILS-SHA384", sizeof(buf));
+			if (dut->key_mgmt_capa &
+			    BIT(SIGMA_AKM_FT_FILS_SHA256))
+				strlcat(buf, " FT-FILS-SHA256", sizeof(buf));
+			if (dut->key_mgmt_capa &
+			    BIT(SIGMA_AKM_FT_FILS_SHA384))
+				strlcat(buf, " FT-FILS-SHA384", sizeof(buf));
+		}
+
+		if (set_network(ifname, id, "key_mgmt", buf) < 0)
 			return -2;
 	}
 
@@ -3453,6 +3488,22 @@ static int get_key_mgmt_capa(struct sigma_dut *dut)
 			dut->key_mgmt_capa |= BIT(SIGMA_AKM_SAE_EXT_KEY);
 		if (strcmp(res, "FT-SAE-EXT-KEY"))
 			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_SAE_EXT_KEY);
+		if (strcmp(res, "FT-EAP"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_802_1X);
+		if (strcmp(res, "FT-EAP-SHA384"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_802_1X_SHA384);
+		if (strcmp(res, "WPA-EAP-SUITE-B"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_SUITE_B);
+		if (strcmp(res, "WPA-EAP-SUITE-B-192"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_SUITE_B_192);
+		if (strcmp(res, "FILS-SHA256"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FILS_SHA256);
+		if (strcmp(res, "FILS-SHA384"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FILS_SHA384);
+		if (strcmp(res, "FT-FILS-SHA256"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_FILS_SHA256);
+		if (strcmp(res, "FT-FILS-SHA384"))
+			dut->key_mgmt_capa |= BIT(SIGMA_AKM_FT_FILS_SHA384);
 
 		res = strtok_r(NULL, " ", &saveptr);
 	}
@@ -7706,6 +7757,7 @@ cmd_sta_preset_testparameters(struct sigma_dut *dut, struct sigma_conn *conn,
 					"Failed to get random length for KDE1");
 			return ERROR_SEND_STATUS;
 		}
+		len = 4 + len % 252;
 		*pos++ = 0xdd;
 		*pos++ = len;
 		if (random_get_bytes((char *) pos, len) < 0) {
@@ -8958,6 +9010,7 @@ static enum sigma_cmd_result cmd_sta_disconnect(struct sigma_dut *dut,
 	    dut->program == PROGRAM_HE ||
 	    dut->program == PROGRAM_EHT ||
 	    dut->program == PROGRAM_LOCR2 ||
+	    dut->program == PROGRAM_PR ||
 	    (val && atoi(val) == 1)) {
 		wpa_command(intf, "DISCONNECT");
 		return 1;
@@ -11070,7 +11123,8 @@ static enum sigma_cmd_result cmd_sta_reset_default(struct sigma_dut *dut,
 
 	kill_iperf(dut);
 
-	if ((dut->program == PROGRAM_LOC || dut->program == PROGRAM_LOCR2) &&
+	if ((dut->program == PROGRAM_LOC || dut->program == PROGRAM_LOCR2 ||
+	     dut->program == PROGRAM_PR) &&
 	    lowi_cmd_sta_reset_default(dut, conn, cmd) < 0)
 		return ERROR_SEND_STATUS;
 
@@ -11439,7 +11493,8 @@ static enum sigma_cmd_result cmd_sta_exec_action(struct sigma_dut *dut,
 	if (program && strcasecmp(program, "Loc") == 0)
 		return loc_cmd_sta_exec_action(dut, conn, cmd);
 
-	if (program && strcasecmp(program, "LOCR2") == 0)
+	if (program && (strcasecmp(program, "LOCR2") == 0 ||
+			strcasecmp(program, "PR") == 0))
 		return loc_r2_cmd_sta_exec_action(dut, conn, cmd);
 
 	if (get_param(cmd, "url"))
@@ -13336,7 +13391,7 @@ static enum sigma_cmd_result cmd_sta_set_wireless(struct sigma_dut *dut,
 			return sta_set_wireless_60g(dut, conn, cmd);
 		if (strcasecmp(val, "WPA3") == 0)
 			return sta_set_wireless_wpa3(dut, conn, cmd);
-		if (strcasecmp(val, "LOCR2") == 0)
+		if (strcasecmp(val, "LOCR2") == 0 || strcasecmp(val, "PR") == 0)
 			return sta_set_wireless_loc_r2(dut, conn, cmd);
 		if (strcasecmp(val, "EHT") == 0)
 			return cmd_sta_set_wireless_eht(dut, conn, cmd);
@@ -17947,7 +18002,7 @@ static enum sigma_cmd_result cmd_sta_set_rfeature(struct sigma_dut *dut,
 	if (strcasecmp(prog, "QM") == 0)
 		return cmd_sta_set_rfeature_qm(intf, dut, conn, cmd);
 
-	if (strcasecmp(prog, "LOCR2") == 0)
+	if (strcasecmp(prog, "LOCR2") == 0 || strcasecmp(prog, "PR") == 0)
 		return cmd_sta_set_rfeature_loc_r2(intf, dut, conn, cmd);
 
 	send_resp(dut, conn, SIGMA_ERROR, "errorCode,Unsupported Prog");
