@@ -1270,7 +1270,7 @@ static enum sigma_cmd_result cmd_sta_get_ip_config(struct sigma_dut *dut,
 }
 
 
-static void kill_dhcp_client(struct sigma_dut *dut, const char *ifname)
+void kill_dhcp_client(struct sigma_dut *dut, const char *ifname)
 {
 #ifdef __linux__
 	char buf[200];
@@ -1344,7 +1344,7 @@ static int get_dhcp_client_path(const char *name, char *buf, size_t buf_size)
 }
 
 
-static int start_dhcp_client(struct sigma_dut *dut, const char *ifname)
+int start_dhcp_client(struct sigma_dut *dut, const char *ifname)
 {
 #ifdef __linux__
 	char fpath[128];
@@ -11708,6 +11708,8 @@ static enum sigma_cmd_result cmd_sta_exec_action(struct sigma_dut *dut,
 		    (strcasecmp(method, "ADVERTISE") == 0 ||
 		     strcasecmp(method, "SEEK") == 0))
 			return usd_cmd_sta_exec_action(dut, conn, cmd);
+		else
+			return p2p_cmd_sta_exec_action(dut, conn, cmd);
 	}
 
 	if (program && strcasecmp(program, "Loc") == 0)
@@ -12338,6 +12340,10 @@ int sta_twt_request(struct sigma_dut *dut, struct sigma_conn *conn,
 	}
 
 	val = get_param(cmd, "TargetWakeTime");
+	if (val)
+		target_wake_time = atoi(val);
+
+	val = get_param(cmd, "TWTSPOffset");
 	if (val)
 		target_wake_time = atoi(val);
 
@@ -16698,10 +16704,25 @@ cmd_sta_send_frame_p2p_cur(struct sigma_dut *dut, struct sigma_conn *conn,
 			   const char *intf, struct sigma_cmd *cmd)
 {
 	const char *val;
+	const char *ifname;
 
 	val = get_param(cmd, "UsageMode");
-	if (val && atoi(val) == 4)
-		return sta_chan_switch_request(dut, conn, intf, cmd);
+	if (val) {
+		if (atoi(val) == 4)
+			return sta_chan_switch_request(dut, conn, intf, cmd);
+
+		if (atoi(val) == 3) {
+			ifname = get_p2p_group_ifname(dut, intf);
+			if (run_iwpriv(dut, ifname,
+				       "setUnitTestCmd 77 2 4 0x0016") < 0) {
+				send_resp(dut, conn, SIGMA_ERROR,
+					  "ErrorCode,Failed to run iwpriv");
+				return STATUS_SENT_ERROR;
+			}
+
+			return SUCCESS_SEND_STATUS;
+		}
+	}
 
 	return INVALID_SEND_STATUS;
 }
