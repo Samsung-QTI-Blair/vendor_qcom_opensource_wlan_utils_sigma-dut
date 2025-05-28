@@ -199,6 +199,8 @@ enum sigma_program sigma_program_to_enum(const char *prog)
 		return PROGRAM_PR;
 	if (strcasecmp(prog, "EHT") == 0)
 		return PROGRAM_EHT;
+	if (strcasecmp(prog, "P2P") == 0)
+		return PROGRAM_P2P;
 
 	return PROGRAM_UNKNOWN;
 }
@@ -340,6 +342,235 @@ unsigned int freq_to_channel(unsigned int freq)
 	if (freq >= 58320 && freq <= 64800)
 		return (freq - 58320) / 2160;
 	return 0;
+}
+
+
+int freq_to_channel_and_class(unsigned int freq, int sec_channel,
+			      enum oper_chan_width chanwidth,
+			      int *op_class, int *channel)
+{
+	u8 vht_opclass;
+
+	if (sec_channel > 1 || sec_channel < -1)
+		return -1;
+
+	if (freq >= 2412 && freq <= 2472) {
+		if ((freq - 2407) % 5)
+			return -1;
+
+		if (chanwidth)
+			return -1;
+
+		/* 2.407 GHz, channels 1..13 */
+		if (sec_channel == 1)
+			*op_class = 83;
+		else if (sec_channel == -1)
+			*op_class = 84;
+		else
+			*op_class = 81;
+
+		*channel = (freq - 2407) / 5;
+
+		return 0;
+	}
+
+	if (freq == 2484) {
+		if (sec_channel || chanwidth)
+			return -1;
+
+		*op_class = 82; /* channel 14 */
+		*channel = 14;
+
+		return 0;
+	}
+
+	if (freq >= 4900 && freq < 5000) {
+		if ((freq - 4000) % 5)
+			return -1;
+		*channel = (freq - 4000) / 5;
+		*op_class = 0; /* TODO */
+		return 0;
+	}
+
+	switch (chanwidth) {
+	case CONF_OPER_CHWIDTH_80MHZ:
+		vht_opclass = 128;
+		break;
+	case CONF_OPER_CHWIDTH_160MHZ:
+		vht_opclass = 129;
+		break;
+	case CONF_OPER_CHWIDTH_80P80MHZ:
+		vht_opclass = 130;
+		break;
+	default:
+		vht_opclass = 0;
+		break;
+	}
+
+	/* 5 GHz, channels 36..48 */
+	if (freq >= 5180 && freq <= 5240) {
+		if ((freq - 5000) % 5)
+			return -1;
+
+		if (vht_opclass)
+			*op_class = vht_opclass;
+		else if (sec_channel == 1)
+			*op_class = 116;
+		else if (sec_channel == -1)
+			*op_class = 117;
+		else
+			*op_class = 115;
+
+		*channel = (freq - 5000) / 5;
+
+		return 0;
+	}
+
+	/* 5 GHz, channels 52..64 */
+	if (freq >= 5260 && freq <= 5320) {
+		if ((freq - 5000) % 5)
+			return -1;
+
+		if (vht_opclass)
+			*op_class = vht_opclass;
+		else if (sec_channel == 1)
+			*op_class = 119;
+		else if (sec_channel == -1)
+			*op_class = 120;
+		else
+			*op_class = 118;
+
+		*channel = (freq - 5000) / 5;
+
+		return 0;
+	}
+
+	/* 5 GHz, channels 149..177 */
+	if (freq >= 5745 && freq <= 5885) {
+		if ((freq - 5000) % 5)
+			return -1;
+
+		if (vht_opclass)
+			*op_class = vht_opclass;
+		else if (sec_channel == 1)
+			*op_class = 126;
+		else if (sec_channel == -1)
+			*op_class = 127;
+		else if (freq <= 5805)
+			*op_class = 124;
+		else
+			*op_class = 125;
+
+		*channel = (freq - 5000) / 5;
+
+		return 0;
+	}
+
+	/* 5 GHz, channels 100..144 */
+	if (freq >= 5500 && freq <= 5720) {
+		if ((freq - 5000) % 5)
+			return -1;
+
+		if (vht_opclass)
+			*op_class = vht_opclass;
+		else if (sec_channel == 1)
+			*op_class = 122;
+		else if (sec_channel == -1)
+			*op_class = 123;
+		else
+			*op_class = 121;
+
+		*channel = (freq - 5000) / 5;
+
+		return 0;
+	}
+
+	if (freq >= 5000 && freq < 5900) {
+		if ((freq - 5000) % 5)
+			return -1;
+		*channel = (freq - 5000) / 5;
+		*op_class = 0; /* TODO */
+		return 0;
+	}
+
+	if (freq > 5950 && freq <= 7115) {
+		if ((freq - 5950) % 5)
+			return -1;
+
+		switch (chanwidth) {
+		case CONF_OPER_CHWIDTH_80MHZ:
+			*op_class = 133;
+			break;
+		case CONF_OPER_CHWIDTH_160MHZ:
+			*op_class = 134;
+			break;
+		case CONF_OPER_CHWIDTH_80P80MHZ:
+			*op_class = 135;
+			break;
+		case CONF_OPER_CHWIDTH_320MHZ:
+			*op_class = 137;
+			break;
+		default:
+			if (sec_channel)
+				*op_class = 132;
+			else
+				*op_class = 131;
+			break;
+		}
+
+		*channel = (freq - 5950) / 5;
+		return 0;
+	}
+
+	if (freq == 5935) {
+		*op_class = 136;
+		*channel = (freq - 5925) / 5;
+		return 0;
+	}
+
+	/* 56.16 GHz, channel 1..6 */
+	if (freq >= 56160 + 2160 * 1 && freq <= 56160 + 2160 * 6) {
+		if (sec_channel)
+			return -1;
+
+		switch (chanwidth) {
+		case CONF_OPER_CHWIDTH_USE_HT:
+		case CONF_OPER_CHWIDTH_2160MHZ:
+			*channel = (freq - 56160) / 2160;
+			*op_class = 180;
+			break;
+		case CONF_OPER_CHWIDTH_4320MHZ:
+			/* EDMG channels 9 - 13 */
+			if (freq > 56160 + 2160 * 5)
+				return -1;
+
+			*channel = (freq - 56160) / 2160 + 8;
+			*op_class = 181;
+			break;
+		case CONF_OPER_CHWIDTH_6480MHZ:
+			/* EDMG channels 17 - 20 */
+			if (freq > 56160 + 2160 * 4)
+				return -1;
+
+			*channel = (freq - 56160) / 2160 + 16;
+			*op_class = 182;
+			break;
+		case CONF_OPER_CHWIDTH_8640MHZ:
+			/* EDMG channels 25 - 27 */
+			if (freq > 56160 + 2160 * 3)
+				return -1;
+
+			*channel = (freq - 56160) / 2160 + 24;
+			*op_class = 183;
+			break;
+		default:
+			return -1;
+		}
+
+		return 0;
+	}
+
+	return -1;
 }
 
 
@@ -1288,4 +1519,26 @@ bool is_6ghz_freq(int freq)
 		return false;
 
 	return true;
+}
+
+
+u16 get_link_id_bitmask(const char *param)
+{
+	u16 bitmask = 0;
+	int link_id;
+
+	while (param) {
+		link_id = atoi(param);
+
+		if (link_id < 0 || link_id > 15)
+			return 0;
+
+		bitmask |= BIT(link_id);
+		param = strchr(param, ':');
+
+		if (param)
+			param++;
+	}
+
+	return bitmask;
 }
