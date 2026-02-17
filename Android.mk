@@ -39,13 +39,13 @@ CFLAGS += -DSIGMA_TMPDIR=\"/data\"
 CFLAGS += -DNL80211_SUPPORT
 
 LOCAL_PATH := $(call my-dir)
-FRAMEWORK_GIT_VER := $(shell cd $(ANDROID_BUILD_TOP/)frameworks/base && git describe)
-SIGMA_GIT_VER := $(shell cd $(LOCAL_PATH) && git describe --dirty=+)
+FRAMEWORK_GIT_VER := $(shell cd ./frameworks/base && git describe --always --dirty=+ 2>/dev/null)
+SIGMA_GIT_VER := $(shell cd $(LOCAL_PATH) && git describe --always --dirty=+ 2>/dev/null)
 ifeq ($(SIGMA_GIT_VER),)
 ifeq ($(FRAMEWORK_GIT_VER),)
 SIGMA_VER := android-$(PLATFORM_VERSION)-$(TARGET_BOARD_PLATFORM)-$(BUILD_ID)
 else
-SIGMA_VER := framework-$(FRAMEWORK_VER)
+SIGMA_VER := framework-$(FRAMEWORK_GIT_VER)
 endif
 else
 ifeq ($(FRAMEWORK_GIT_VER),)
@@ -59,9 +59,7 @@ CFLAGS += -DSIGMA_DUT_VER=\"$(SIGMA_VER)\"
 include $(CLEAR_VARS)
 LOCAL_MODULE := sigma_dut
 QCOM_WLAN_ROOT ?= hardware/qcom/wlan
-ifeq ($(PRODUCT_VENDOR_MOVE_ENABLED), true)
 LOCAL_VENDOR_MODULE := true
-endif
 LOCAL_CLANG := true
 LOCAL_MODULE_TAGS := optional
 LOCAL_C_INCLUDES += \
@@ -98,11 +96,7 @@ endif
 CFLAGS += -Wno-unused-parameter
 LOCAL_C_INCLUDES += system/security/keystore/include/keystore
 LOCAL_SHARED_LIBRARIES += liblog
-ifeq ($(PRODUCT_VENDOR_MOVE_ENABLED), true)
 LOCAL_SHARED_LIBRARIES += libkeystore-engine-wifi-hidl libkeystore-wifi-hidl
-else
-LOCAL_SHARED_LIBRARIES += libkeystore_binder
-endif
 LOCAL_SRC_FILES := $(OBJS)
 LOCAL_HEADER_LIBRARIES := libcutils_headers
 LOCAL_CFLAGS := $(CFLAGS)
